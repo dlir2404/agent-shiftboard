@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -126,9 +127,23 @@ func reconcilePanes(ctx context.Context, c *coord.Coordinator) {
 		if s.PaneID == "" || s.Status == "stopped" || s.Status == "failed" {
 			continue
 		}
-		if _, err := ws.R.Run("display-message", "-p", "-t", s.PaneID, "#{pane_id}"); err != nil {
+		panePID, err := ws.R.Run("display-message", "-p", "-t", s.PaneID, "#{pane_pid}")
+		if err != nil {
 			_ = c.Observe(ctx, coord.User, s.ID, "stopped", "host_lost", "process")
 			continue
+		}
+		// tmux reuses pane IDs across server restarts: the pane must still
+		// host this session's process (directly or as its parent).
+		if s.PID > 0 {
+			pp, _ := strconv.Atoi(panePID)
+			owns := pp == s.PID
+			for _, a := range coord.Ancestors(s.PID) {
+				owns = owns || a == pp
+			}
+			if !owns {
+				_ = c.Observe(ctx, coord.User, s.ID, "stopped", "host_lost", "process")
+				continue
+			}
 		}
 		if alive, _ := ws.PaneAlive(s.PaneID); !alive {
 			_ = c.Observe(ctx, coord.User, s.ID, "failed", "process_crash", "process")

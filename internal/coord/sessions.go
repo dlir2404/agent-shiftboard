@@ -196,6 +196,13 @@ func (c *Coordinator) applyObservation(tx *sql.Tx, s sessionInfo, status, reason
 		status, reason, source, now, unknownSince, s.ID); err != nil {
 		return err
 	}
+	if status == "stopped" || status == "failed" {
+		// tmux reuses pane IDs (for example after a server restart); a
+		// pane ID must never point at another process's pane.
+		if _, err := tx.Exec(`UPDATE sessions SET pane_id='',pid=0 WHERE id=?`, s.ID); err != nil {
+			return err
+		}
+	}
 	if status != s.Status {
 		if err := c.event(tx, s.TaskID, Actor{SessionID: s.ID}, "status", fmt.Sprintf("%s -> %s %s", s.Status, status, reason)); err != nil {
 			return err

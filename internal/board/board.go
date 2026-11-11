@@ -178,8 +178,15 @@ func loadSnapshot(open Opener) snapshot {
 					it.role = "worker " + as[i].ID
 				}
 			}
-			if Capture != nil && x.PaneID != "" {
-				it.output = Capture(x.PaneID, 60)
+			gone := x.Status == "stopped" || x.Status == "failed"
+			if gone || x.PaneID == os.Getenv("TMUX_PANE") {
+				it.pane = ""
+			}
+			if gone && strings.HasPrefix(role, "lead") {
+				it.keys = "enter resume"
+			}
+			if Capture != nil && it.pane != "" {
+				it.output = Capture(it.pane, 60)
 				if p := nativePrompt(it.output); p != "" {
 					it.status, it.reason = "waiting_for_approval", p
 					it.keys = "enter open and answer it"
