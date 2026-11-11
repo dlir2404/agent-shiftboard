@@ -10,7 +10,7 @@ The brief is not a chat transcript, activity dump, or model reasoning trace. Age
 
 The **coordinator** is AgentShiftboard's core state logic over the local SQLite store. It is not a separate daemon: it runs inside whichever AgentShiftboard process is acting at the moment — a state command (CLI or MCP server), a provider hook handler, or the TUI board. Each of them uses short SQLite transactions. Interactive agent processes are owned by tmux, not by the coordinator (D-14).
 
-All state changes go through one set of coordinator operations (D-16). This includes brief revisions, rules, pending items, delegations, assignments, side effects, shared resources, and locks. Each write carries the revision it was based on; a write based on an older revision is rejected and must be retried on the current one.
+All state changes go through one set of coordinator operations (D-16). This includes brief revisions, rules, pending items, delegations, assignments, side effects, shared resources, and locks. Each brief update carries the revision it was based on; an update based on an older revision is rejected and must be retried on the current one. Other operations act on individual records by ID, each in its own transaction, and check the record's current status.
 
 Operations are split by who may perform them:
 

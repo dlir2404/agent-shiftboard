@@ -1,0 +1,70 @@
+// Package store opens AgentShiftboard's SQLite databases and applies the schema.
+package store
+
+import (
+	"context"
+	"database/sql"
+	_ "embed"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+//go:embed schema.sql
+var schema string
+
+// SchemaVersion is bumped with every schema change that needs a migration.
+const SchemaVersion = "1"
+
+// Open opens (creating if needed) the database at path and applies the schema.
+func Open(path string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_txlock=immediate", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply schema: %w", err)
+	}
+	var v string
+	err = db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v)
+	switch {
+	case err == sql.ErrNoRows:
+		if _, err := db.Exec(`INSERT INTO meta(key,value) VALUES('schema_version',?)`, SchemaVersion); err != nil {
+			db.Close()
+			return nil, err
+		}
+	case err != nil:
+		db.Close()
+		return nil, err
+	case v != SchemaVersion:
+		db.Close()
+		return nil, fmt.Errorf("database %s has schema version %s; this binary supports %s", path, v, SchemaVersion)
+	}
+	_ = os.Chmod(path, 0o600)
+	return db, nil
+}
+
+// Tx runs fn in a short write transaction.
+func Tx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
+// Now returns the current time as stored: RFC 3339 in UTC.
+func Now() string { return time.Now().UTC().Format(time.RFC3339) }
