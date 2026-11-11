@@ -1,82 +1,72 @@
+<div align="center">
+
 # AgentShiftboard
 
-**One terminal workspace for running coding agents (Claude Code, Codex, …) as a team — with shared task memory that survives quotas, compactions, closed terminals, and hand-offs between CLIs.**
+**Run Claude Code, Codex, and other coding agents as one team — in one terminal, with shared memory that outlives any single session.**
 
-AgentShiftboard runs the official coding-agent CLIs you already use, each as its own native session, and keeps the work around them in one place: what you are building, the steps and their status, the rules you set, what is waiting for your approval, and what has already been done to the outside world. A lead agent can hand parts of the work to other agents — of the same or another CLI — and when a lead stops, a fresh session (or another CLI) picks up from the same state instead of from scratch.
+![status: alpha](https://img.shields.io/badge/status-alpha-orange)
+![platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
+![go 1.27+](https://img.shields.io/badge/go-1.27%2B-00ADD8)
+![agents: Claude Code · Codex](https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex-blueviolet)
 
-> **Status: alpha.** Claude Code and Codex are supported on macOS. Expect rough edges and breaking changes. See [Status and roadmap](#status-and-roadmap).
+[About](#about) · [Why](#why-agentshiftboard) · [Install](#platforms-and-installation) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Docs](docs/)
+
+</div>
 
 ```text
 ┌ AgentShiftboard · my-app ─────────┬──────────────────────────────────────────────┐
 │ ● 1 running   ◐ 1 need you        │                                              │
-│                                   │   Claude Code (the lead of #4) runs here:    │
-│ SESSIONS                          │   you talk to it as usual                    │
+│                                   │   Claude Code, the lead of #4, runs here.    │
+│ SESSIONS                          │   You talk to it as usual.                   │
 │ ● #4 Add OAuth login              │                                              │
 │   ▰▰▰▰▱▱ 4/6 · claude ● codex ◐ ◐1│                                              │
 │ ○ #2 Fix flaky cache test         │                                              │
 │   ▰▰▰▰▰▰ 3/3 · claude ○           │                                              │
 │ ───────────────────────────────── │                                              │
 │ #4 Add OAuth login                │                                              │
-│ NEXT                              │                                              │
-│   Review Codex's provider config  │                                              │
+│ NEXT  Review Codex's provider     │                                              │
+│       config, then run the tests  │                                              │
 │ AGENTS                            │                                              │
-│   ● claude lead     running       │                                              │
+│   ● claude lead      running      │                                              │
 │   ◐ codex worker A-2 asks approval│                                              │
-│ space actions  ⏎ open lead        │                                              │
 └───────────────────────────────────┴──────────────────────────────────────────────┘
  ◐ 1 need you · ⇧↓ open · ⇧← list · ⇧→ session · Ctrl+Q leave
 ```
 
-## Why
+## About
 
-Long agent sessions fail in predictable ways:
+AgentShiftboard is what I wanted from working with several coding agents at once: keep using the real CLIs, let them hand work to each other, and never lose track of what was decided, what is done, and what is waiting for me.
 
-- **A quota runs out mid-task.** Did the push already happen? What was the next step?
-- **Context gets compacted.** The agent forgets "the dev database is read-only" or "always ask before pushing".
-- **Approvals get lost.** A successor treats an earlier "ok" as permission for something else.
-- **Work is trapped in one CLI.** Helper scripts and progress live in one tool's private folders; another tool starts over.
+It runs the official CLIs you already have — Claude Code and Codex today — as native interactive sessions in a tmux workspace. Around them it keeps one small local store per project: the sessions you are working on, each one's checklist and brief, the rules you set, what needs your approval, and every action that touched the outside world. A lead agent can delegate to a worker in another CLI; when a lead stops, a fresh session or a different CLI continues from that store instead of from scratch.
 
-AgentShiftboard keeps that state outside any single agent, in a small local store every session reads and writes through the same interface.
+## Why AgentShiftboard
 
-## Features
+Tools for working with coding agents today fall into three groups:
 
-- **Native CLIs, side by side.** Claude Code and Codex run as their own interactive sessions in a tmux workspace — slash commands, skills, and permission prompts work as usual.
-- **Sessions and live checklists.** Each line of work (a *session*) shows its steps with status. Steps are mirrored automatically from the agents' own todo/plan tools (Claude `TodoWrite`/`TaskCreate`/`TaskUpdate`, Codex `update_plan`), plus anything agents record explicitly.
-- **Delegation between CLIs.** The lead creates an assignment and starts a worker in any supported CLI. The worker submits a result, the lead is notified and reviews it, and the finished worker is closed.
-- **Lead hand-off.** Switch a session's lead to another CLI; the new lead reads the brief, the rules, and open items, and must acknowledge them before it can act.
-- **Rules and approvals that stick.** Durable user rules (user, project, or task scope), approvals scoped to an exact action and target, and time-bounded delegations — kept as structured records, not chat history.
-- **Side-effect journal.** External actions (git push, deploys, DB writes, messages) are recorded before and after. A hook blocks unrecorded ones; outcomes cut off by a crash become `unknown` so nobody repeats them blindly.
-- **Shared resources.** Config values, secret *references* (never values), and reusable tools in a provider-neutral registry, so a script one agent wrote is available to all.
-- **One key to what needs you.** The status line counts what is waiting for you; `Shift+↓` jumps straight to it.
+- **Session managers** — Agent Deck, ReevesAgents, Claude Code's own agent view. Many sessions in one place, but each session's knowledge stays inside its own CLI and conversation.
+- **Context stores** — CarryCtx, Carryover. Persistent task state or hand-off notes, but no runtime that drives the agents, or memory rebuilt from transcripts.
+- **Built-in subagents** — delegation inside one vendor's CLI only, gone when the parent session ends.
 
-## How it works
+Long sessions then fail the same ways: a quota runs out mid-push and nobody knows whether it happened; a compaction forgets *"the dev database is read-only"*; a successor treats an old "ok" as approval for something else; a helper script one agent wrote is invisible to the next.
 
-```text
- you ── tmux workspace (own server) ──┬── session list (AgentShiftboard)
-                                      ├── claude  (lead)      ─┐ hooks + MCP
-                                      └── codex   (worker)    ─┤
-                                                               ▼
-                         agent-shiftboard CLI / MCP server ── coordinator ── SQLite
-                                                                        (.agent-shiftboard/state.db)
-```
+AgentShiftboard is the missing fourth: native CLIs from different vendors working as one team, on state that outlives any single session — structured, local, and never read from transcripts.
 
-- **Coordinator.** Core state logic over a local SQLite database. It is not a daemon: it runs inside whichever process acts — a CLI call, the MCP server, a hook, or the session list.
-- **Adapters.** Provider-specific launch, resume, hook, and status mapping live behind one interface. Each session gets its hooks and MCP server through per-invocation settings (`claude --settings/--mcp-config`, `codex -c …`); your own CLI configuration files are never edited.
-- **Brief.** The lead keeps a concise brief (goal, decisions, done, next action) through the same operations. It is what a fresh session reads — never a transcript.
-- **tmux.** A dedicated tmux server (`-L agent-shiftboard`) with its own config hosts the sessions, so they keep running when you close the terminal. Your tmux setup is untouched.
+## Platforms and installation
 
-The full design is in [docs/](docs/): the [plan](docs/PLAN.md), the [state and handoff contract](docs/STATE-CONTRACT.md), and the [decision log](docs/DECISIONS.md).
+| Platform | Status | Install |
+|---|---|---|
+| macOS | Alpha | `go install github.com/dlir2404/agent-shiftboard/cmd/agent-shiftboard@latest` |
+| Linux | Untested | Build from source |
+| Windows | Not supported | — |
 
-## Requirements
+| Agent CLI | Status | Roles |
+|---|---|---|
+| [Claude Code](https://code.claude.com) | Supported | lead, worker |
+| [Codex CLI](https://developers.openai.com/codex) | Supported | lead, worker |
+| Google Antigravity (`agy`) | Planned | — |
+| Hermes | Planned | — |
 
-- macOS (Linux is expected to work but is untested; Windows is not supported)
-- [tmux](https://github.com/tmux/tmux) 3.3 or later
-- Go 1.27 or later (to build from source)
-- At least one supported CLI, installed and logged in:
-  - [Claude Code](https://code.claude.com) — `claude`
-  - [Codex CLI](https://developers.openai.com/codex) — `codex`
-
-## Installation
+**Requirements:** [tmux](https://github.com/tmux/tmux) 3.3+, Go 1.27+ to build, and at least one supported CLI installed and logged in.
 
 From source:
 
@@ -84,18 +74,7 @@ From source:
 git clone https://github.com/dlir2404/agent-shiftboard.git
 cd agent-shiftboard
 go build -o ~/.local/bin/agent-shiftboard ./cmd/agent-shiftboard   # any directory on your PATH
-```
-
-Or with `go install`:
-
-```sh
-go install github.com/dlir2404/agent-shiftboard/cmd/agent-shiftboard@latest
-```
-
-Then check your setup (no model calls are made):
-
-```sh
-agent-shiftboard doctor
+agent-shiftboard doctor                                            # checks CLIs and tmux; no model calls
 ```
 
 ## Quick start
@@ -105,125 +84,91 @@ cd your-project
 agent-shiftboard
 ```
 
-The first run creates `.agent-shiftboard/` (add it to `.gitignore`) and drops you straight into Claude Code as the lead of a new session. Just tell it what you want; it names the session, keeps the checklist moving, and records rules and approvals as you go.
+The first run creates `.agent-shiftboard/` (add it to `.gitignore`) and opens straight into Claude Code as the lead of a new session. Tell it what you want. It names the session, keeps the checklist moving, and records your rules and approvals as you go — *"always ask me before pushing"*, *"give the README to Codex"*, *"you can decide small product questions until tomorrow morning"*.
 
-Run `agent-shiftboard` again any time to come back. Sessions keep running in the background.
+Run `agent-shiftboard` again to come back. Sessions keep running when you leave.
 
-## Using the workspace
+## Features
+
+- **Native CLIs, side by side** — slash commands, skills, and each CLI's own permission prompts work as usual.
+- **Sessions with live checklists** — steps mirrored from the agents' own todo and plan tools, plus anything they record explicitly.
+- **Delegation across CLIs** — the lead hands an assignment to a Claude or Codex worker, is notified when the result is in, reviews it; finished workers close themselves.
+- **Lead hand-off** — switch a session's lead to another CLI; the new lead must read back the rules and open items before it can act.
+- **Rules, approvals, delegations** — durable rules by scope, approvals bound to an exact action and target, time-limited delegations you confirm.
+- **Side-effect journal** — pushes, deploys, and other external actions are recorded before and after; unrecorded ones are blocked; outcomes cut off by a crash become `unknown` instead of being repeated.
+- **Shared resources** — config, secret *references*, and reusable tools in one registry every CLI can use.
+- **One key to what needs you** — the status line counts it, `Shift+↓` takes you there.
+
+## How it works
+
+```text
+ you ── tmux workspace (own server) ──┬── session list
+                                      ├── claude (lead)    ─┐ hooks + MCP
+                                      └── codex  (worker)  ─┤
+                                                            ▼
+                    agent-shiftboard CLI / MCP server ── coordinator ── SQLite
+```
+
+- **Coordinator** — state logic over a per-project SQLite database. Not a daemon: it runs inside whichever process acts.
+- **Adapters** — launch, resume, hooks, and status per CLI, injected per session (`claude --settings`, `codex -c`). Your CLI config files are never edited.
+- **Brief and records** — what a fresh session reads: goal, decisions, done, next action, rules, open items. Never a transcript.
+- **tmux** — a dedicated server with its own config hosts the sessions, so they survive closing the terminal and leave your tmux setup alone.
+
+Design documents: [plan](docs/PLAN.md) · [state and hand-off contract](docs/STATE-CONTRACT.md) · [decision log](docs/DECISIONS.md) · [landscape](docs/LANDSCAPE.md).
+
+## Keys
 
 | Where | Key | Action |
 |---|---|---|
-| anywhere | `Shift+↓` | Jump to what needs you (an agent's prompt, or the Needs you panel) |
-| anywhere | `Shift+←` / `Shift+→` | Move between the session list and the session on the right |
-| anywhere | `Ctrl+Q` | Leave the workspace (sessions keep running) |
-| list | `↑` `↓` | Select a session |
-| list | `→` / `Enter` | Show the session's lead on the right (resume it if it exited) |
-| list | `Space` | Open the session's actions panel |
-| list | `n` | Start a new session |
-| list | `/` | Find a session |
-| actions panel | `↑` `↓` `→` `←` `Esc` | Navigate: Overview, Checklist, Agents, Needs you, Open the lead, Switch lead CLI |
-| Needs you | `a` / `x` / `c` / `v` | Approve, deny, confirm, revoke |
-
-When a lead's CLI exits, its pane offers to resume it, switch to another CLI, start a new session, or open another one.
-
-Talking to the lead is enough for most things — for example *"give the README to Codex"*, *"always ask me before pushing"*, or *"you can decide small product questions until tomorrow morning"* (recorded as a delegation you confirm in the list).
+| anywhere | `Shift+↓` | Jump to what needs you |
+| anywhere | `Shift+←` / `Shift+→` | Session list / the session on the right |
+| anywhere | `Ctrl+Q` | Leave (sessions keep running) |
+| list | `↑` `↓`, `→` / `Enter` | Select; show the session's lead (resume it if it exited) |
+| list | `Space` | Actions: overview, checklist, agents, needs you, switch lead CLI |
+| list | `n` · `/` | New session · find |
+| needs you | `a` `x` `c` `v` | Approve · deny · confirm · revoke |
 
 ## Configuration
 
-Policy lives in `.agent-shiftboard/config.toml` (project) and `~/.config/agent-shiftboard/config.toml` (user). Only you edit these files; agents cannot change them.
+Policy lives in `.agent-shiftboard/config.toml` and `~/.config/agent-shiftboard/config.toml`. Only you edit these files; agents cannot.
 
 ```toml
-# Approvals you give in chat may be recorded by the lead ("allow"),
-# or must be given in the list ("board_only").
-conversation_approvals = "allow"
+conversation_approvals = "allow"   # or "board_only": approvals only from the session list
+lead_priority = ["claude", "codex"]
+wake_lead_on_results = true        # tell an idle lead when a worker finishes
+close_workers_when_done = true     # close a worker once its result is accepted
 
-lead_priority = ["claude", "codex"]   # CLI for new leads
-wake_lead_on_results = true            # tell an idle lead when a worker finishes
-close_workers_when_done = true         # close a worker once its result is accepted
-
-[providers.claude]
-# permission_mode = "manual"           # passed to the CLI; skip-permission modes are refused
-
-# Commands and MCP tools that count as external side effects.
-[external_actions]
+[external_actions]                 # what counts as a side effect
 shell = ['^git\s+push\b', '^kubectl\s+(apply|delete|rollout)\b']
-mcp_tools = ['^mcp__.*__(send|post|publish)']
 ```
 
-See the sample written by `agent-shiftboard init` for all options.
+All data stays on your machine: `.agent-shiftboard/` in the project, `~/.config/agent-shiftboard/`, and generated files in `~/.local/state/agent-shiftboard/`.
 
-### Files and data
+## Safety
 
-| Path | Contents |
-|---|---|
-| `.agent-shiftboard/state.db` | Sessions, briefs, rules, approvals, checklists, side effects (per project) |
-| `.agent-shiftboard/config.toml` | Project policy |
-| `.agent-shiftboard/tools/` | Shared helper scripts registered by agents |
-| `~/.config/agent-shiftboard/` | User-scope rules and resources, user policy, tmux config |
-| `~/.local/state/agent-shiftboard/` | Generated launch scripts, per-session CLI settings, rendered briefs |
+- **Official CLIs only.** No API proxy, no credential handling, no account switching around limits.
+- **Your permission settings stay in charge.** AgentShiftboard never answers a CLI's permission prompt, never types into a pane waiting for approval, and never enables a skip-permissions mode.
+- **User decisions stay with the user.** Confirming rules, approving from the list, and switching leads are refused inside agent sessions and are not exposed to agents.
+- **No transcripts, no secret values.** Memory is the brief and structured records; secrets are stored only as references.
 
-Everything is local. Nothing is sent anywhere by AgentShiftboard itself.
+Details: [AGENTS.md](AGENTS.md) and the [state contract](docs/STATE-CONTRACT.md).
 
-## Command line
+## Roadmap
 
-Agents use these through their shell or the built-in MCP server; you rarely need them yourself.
-
-```text
-agent-shiftboard                       open the workspace
-agent-shiftboard doctor                detect installed CLIs and tmux
-agent-shiftboard task list|show        sessions (internally "tasks")
-agent-shiftboard brief show            the session brief
-agent-shiftboard item list|add|set     checklist items
-agent-shiftboard rule list|add         durable rules (confirm/revoke: user only)
-agent-shiftboard pending list|add      questions and approvals (approve/deny: user only)
-agent-shiftboard effect plan|start|finish|reconcile
-agent-shiftboard delegate / worker start <A-id> --provider codex
-agent-shiftboard lead new|switch|resume <task>
-agent-shiftboard tool|config|secret ref|lock …
-agent-shiftboard mcp                   MCP server (stdio) with read and agent operations
-```
-
-Run `agent-shiftboard <command> --help` for details.
-
-## Safety model
-
-- **Official CLIs only.** No API proxy, no credential handling, no account switching to get around limits.
-- **Your permission settings stay in charge.** Each CLI keeps its own approval prompts. AgentShiftboard never answers a CLI's prompt, never types into a pane that is waiting for approval, and never enables a skip-permissions mode.
-- **User operations are separate.** Confirming rules and delegations, approving from the list, breaking locks, and switching leads are refused inside agent sessions (detected by environment and process ancestry) and are not exposed over MCP.
-- **No transcripts.** Task memory is the brief and structured records. Provider transcript files are never read; hooks only see tool-call arguments.
-- **No secret values.** Writes are scanned for credential-like strings; agents record where a secret lives, not what it is.
-
-These rules are enforced in code and described in [AGENTS.md](AGENTS.md) and the [state contract](docs/STATE-CONTRACT.md).
-
-## Status and roadmap
-
-Working today:
-
-- Claude Code and Codex adapters (lead and worker), tmux workspace, session list and actions panel
-- Briefs, checklists mirrored from agent todo tools, rules, approvals, delegations, side-effect journal, shared resources, advisory locks
-- Delegation with result notification, lead switch between CLIs with readback acknowledgement
-
-Planned:
-
-- Opt-in automatic failover to another CLI when a lead hits its limit
-- Google Antigravity (`agy`) and Hermes adapters
-- Retention for old brief revisions and events
-- Packaging (Homebrew tap, release binaries) and Linux validation
-
-Known limitations are tracked in [docs/SPIKE-PHASE0.md](docs/SPIKE-PHASE0.md) and the open items in [docs/REVIEW-2.md](docs/REVIEW-2.md).
-
-## Related projects
-
-[Agent Deck](https://github.com/asheshgoplani/agent-deck), [CarryCtx](https://github.com/Xuepoo/carryctx), [ReevesAgents](https://github.com/mertkayacs/reevesagents), and [mu](https://github.com/mu-crew/mu) cover parts of this space. See [docs/LANDSCAPE.md](docs/LANDSCAPE.md) for how AgentShiftboard differs.
+- [x] Claude Code and Codex as lead and worker
+- [x] Session list, actions panel, live checklists
+- [x] Delegation with result notification; lead switch between CLIs
+- [ ] Opt-in automatic failover when a lead hits its limit
+- [ ] Antigravity and Hermes adapters
+- [ ] Retention for old brief revisions and events
+- [ ] Homebrew tap and release binaries; Linux validation
 
 ## Contributing
 
-Issues and pull requests are welcome. Before changing architecture or persistence, read [AGENTS.md](AGENTS.md), the [plan](docs/PLAN.md), the [state contract](docs/STATE-CONTRACT.md), and the [decision log](docs/DECISIONS.md); record new product decisions in the decision log.
+Issues and pull requests are welcome. Before changing architecture or persistence, read [AGENTS.md](AGENTS.md) and the [decision log](docs/DECISIONS.md), and record new product decisions there.
 
 ```sh
-go build ./...
-go vet ./...
-go test ./...
+go build ./... && go vet ./... && go test ./...
 ```
 
 ## License
