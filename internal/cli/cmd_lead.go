@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -23,62 +22,126 @@ import (
 	"github.com/dlir2404/agent-shiftboard/internal/tmux"
 )
 
-const initialPrompt = "You were started by AgentShiftboard. Follow the AgentShiftboard instructions in your system prompt: acknowledge the handoff with the readback command first, then read the brief and reply with one line stating the next action. Do not take any other action yet."
-
 func (a *app) leadCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "lead", Short: "Start, resume, or switch a task's lead session (user)"}
 	var provider string
-	var registerOnly, noWait bool
+	var registerOnly bool
 	newCmd := &cobra.Command{
 		Use:   "new <task>",
-		Short: "Start a new lead session from the brief (user)",
-		Long: `Starts the provider's native CLI in a hidden tmux window with the brief,
-rules, open items, and resource index. After the session acknowledges by
-readback, it moves into the main slot. Choosing this command is your
-confirmation for that swap.`,
-		Args: cobra.ExactArgs(1),
+		Short: "Start a new lead session from the brief in its own workspace window (user)",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
-				return a.startLead(ctx, c, actor, id, provider, registerOnly, noWait)
+				if registerOnly {
+					return a.registerLeadOnly(ctx, c, actor, id, provider)
+				}
+				return a.openLeadCmd(ctx, c, actor, id, "new", provider)
 			})
 		},
 	}
 	newCmd.Flags().StringVar(&provider, "provider", "", "provider CLI (default: first of lead_priority, else claude)")
 	newCmd.Flags().BoolVar(&registerOnly, "register-only", false, "register the session and write its launch context without launching")
-	newCmd.Flags().BoolVar(&noWait, "no-wait", false, "do not wait for the acknowledgement; confirm the swap later with `handoff confirm`")
 
 	switchCmd := &cobra.Command{
-		Use: "switch <provider> <task>", Short: "Start a new lead of another provider (user)", Args: cobra.ExactArgs(2),
+		Use: "switch <provider> <task>", Short: "Hand the task to a new lead of another provider (user)", Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseTaskArg(args[1])
 			if err != nil {
 				return err
 			}
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
-				return a.startLead(ctx, c, actor, id, args[0], false, noWait)
+				return a.openLeadCmd(ctx, c, actor, id, "new", args[0])
 			})
 		},
 	}
-	switchCmd.Flags().BoolVar(&noWait, "no-wait", false, "do not wait for the acknowledgement")
-
 	resume := &cobra.Command{
-		Use: "resume <task>", Short: "Resume the lead's own native session in the main slot (user)", Args: cobra.ExactArgs(1),
+		Use: "resume <task>", Short: "Resume the lead's own native session (user)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
-				return a.resumeLead(ctx, c, actor, id)
+				return a.openLeadCmd(ctx, c, actor, id, "resume", "")
 			})
 		},
 	}
 	cmd.AddCommand(newCmd, switchCmd, resume)
 	return cmd
+}
+
+func (a *app) openLeadCmd(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64, mode, provider string) error {
+	if !actor.IsUser() {
+		return coord.ErrUserOnly
+	}
+	if provider != "" {
+		if _, err := adapter.Get(provider); err != nil {
+			return err
+		}
+	}
+	if !tmux.Available() {
+		return tmux.ErrNoTmux
+	}
+	ws := tmux.New(tmux.Exec{}, c.Root)
+	if _, err := ws.Ensure(); err != nil {
+		return err
+	}
+	if _, err := a.openLead(ctx, c, ws, id, mode, provider, true); err != nil {
+		return err
+	}
+	return a.done(fmt.Sprintf("The lead of task #%d is starting in its own window. Run `agent-shiftboard` to open the workspace.", id), map[string]any{"task": id})
+}
+
+// openLead shows the task's live lead, or opens a window that runs the
+// lead (start --task) and returns its pane. mode: auto | resume | new.
+func (a *app) openLead(ctx context.Context, c *coord.Coordinator, ws tmux.Workspace, id int64, mode, provider string, show bool) (string, error) {
+	t, err := c.GetTask(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if mode != "new" {
+		if pane := leadPane(ctx, c, t); pane != "" {
+			if alive, _ := ws.PaneAlive(pane); alive {
+				if show {
+					return pane, ws.Show(pane)
+				}
+				return pane, nil
+			}
+		}
+	}
+	cmd := []string{ws.Self, "start", "--task", strconv.FormatInt(id, 10), "--mode", mode}
+	if provider != "" {
+		cmd = append(cmd, "--provider", provider)
+	}
+	// The start loop is a user process: no agent session variable.
+	return ws.OpenWindow(fmt.Sprintf("#%d lead", id), map[string]string{"AGENT_SHIFTBOARD_PROJECT": c.Root}, cmd, show)
+}
+
+func (a *app) registerLeadOnly(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64, provider string) error {
+	if provider == "" {
+		provider = a.defaultProvider(c)
+	}
+	native := ""
+	if p, err := adapter.Get(provider); err == nil && p.PreassignsID() {
+		native = uuid.NewString()
+	}
+	sid, err := c.StartLead(ctx, actor, id, coord.SessionSpec{Provider: provider, NativeSessionID: native,
+		PermissionMode: c.Policy.Providers[provider].PermissionMode})
+	if err != nil {
+		return err
+	}
+	launch, _, err := writeLaunchContext(ctx, c, id, sid)
+	if err != nil {
+		return err
+	}
+	return a.emit(map[string]string{"session": sid, "launch_context": launch}, func(w io.Writer) {
+		fmt.Fprintf(w, "Registered lead session %s for task #%d.\nLaunch context: %s\nStart the CLI yourself with %s=%s set.\n",
+			sid, id, launch, coord.SessionEnv, sid)
+	})
 }
 
 func (a *app) defaultProvider(c *coord.Coordinator) string {
@@ -98,164 +161,6 @@ func (a *app) launchSpec(c *coord.Coordinator, sid, native, provider string) ada
 		SessionID: sid, NativeID: native, Root: c.Root, Self: ws.Self,
 		SessionDir: sessionDir(c.Root, sid), PermissionMode: c.Policy.Providers[provider].PermissionMode,
 	}
-}
-
-func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64, provider string, registerOnly, noWait bool) error {
-	if provider == "" {
-		provider = a.defaultProvider(c)
-	}
-	if !registerOnly {
-		if _, err := adapter.Get(provider); err != nil {
-			return err
-		}
-		if !tmux.Available() {
-			return tmux.ErrNoTmux
-		}
-	}
-	var ws tmux.Workspace
-	if !registerOnly {
-		ws = tmux.New(tmux.Exec{}, c.Root)
-		if _, err := ws.Ensure(nil); err != nil {
-			return err
-		}
-		// With no live lead in the main slot, the new session runs right
-		// there, so the user sees any native prompt (folder trust, login,
-		// permissions). Hidden windows are only for replacing a live lead.
-		if !mainHasLiveLead(ctx, c, ws) {
-			if err := ws.RunInMain([]string{ws.Self, "start", "--task", fmt.Sprint(id), "--new"}); err != nil {
-				return err
-			}
-			return a.done(fmt.Sprintf("The new lead of task #%d is starting in the main slot. Run `agent-shiftboard` to open the workspace.", id), map[string]any{"task": id})
-		}
-	}
-	native := ""
-	if p, err := adapter.Get(provider); err == nil && p.PreassignsID() {
-		native = uuid.NewString()
-	}
-	sid, err := c.StartLead(ctx, actor, id, coord.SessionSpec{Provider: provider, NativeSessionID: native,
-		PermissionMode: c.Policy.Providers[provider].PermissionMode})
-	if err != nil {
-		return err
-	}
-	launch, _, err := writeLaunchContext(ctx, c, id, sid)
-	if err != nil {
-		return err
-	}
-	if registerOnly {
-		return a.emit(map[string]string{"session": sid, "launch_context": launch}, func(w io.Writer) {
-			fmt.Fprintf(w, "Registered lead session %s for task #%d.\nLaunch context: %s\nStart the CLI yourself with %s=%s set.\n",
-				sid, id, launch, coord.SessionEnv, sid)
-		})
-	}
-	spec := a.launchSpec(c, sid, native, provider)
-	spec.Role, spec.LaunchContext, spec.InitialPrompt = "lead", launch, initialPrompt
-	prov, err := adapter.Get(provider)
-	if err != nil {
-		return err
-	}
-	command, err := prov.Launch(spec)
-	if err != nil {
-		return err
-	}
-	script, err := adapter.WriteScript(spec.SessionDir, "launch.sh", command)
-	if err != nil {
-		return err
-	}
-	pane, err := ws.Launch("lead-"+sid[:8], spec.Env(), []string{"/bin/sh", script})
-	if err != nil {
-		return err
-	}
-	_ = ws.KeepOnExit(pane)
-	pid, _ := strconv.Atoi(mustOut(ws.R.Run("display-message", "-p", "-t", pane, "#{pane_pid}")))
-	if err := c.SetSessionRuntime(ctx, sid, pane, pid, native); err != nil {
-		return err
-	}
-	fmt.Fprintf(a.errOut, "Started %s lead session %s for task #%d in a hidden window (pane %s).\n", provider, sid, id, pane)
-	if noWait {
-		fmt.Fprintf(a.errOut, "After it acknowledges, run `agent-shiftboard handoff confirm %d` to show it in the main slot.\n", id)
-		return nil
-	}
-	return a.waitAndSwap(ctx, c, ws, id, sid, pane)
-}
-
-// waitAndSwap waits for the readback acknowledgement, then moves the pane
-// into the main slot. Starting the session was the user's confirmation.
-func (a *app) waitAndSwap(ctx context.Context, c *coord.Coordinator, ws tmux.Workspace, id int64, sid, pane string) error {
-	deadline := time.Now().Add(time.Duration(c.Policy.HandoffAckTimeoutSeconds) * time.Second)
-	fmt.Fprint(a.errOut, "Waiting for the readback acknowledgement")
-	for time.Now().Before(deadline) {
-		t, err := c.GetTask(ctx, id)
-		if err != nil {
-			return err
-		}
-		if t.LeaseState == "held" && t.LeadSession == sid {
-			fmt.Fprintln(a.errOut, " — acknowledged.")
-			if err := ws.SwapIntoMain(pane); err != nil {
-				return err
-			}
-			_ = c.ConfirmSwap(ctx, coord.User, id)
-			return a.done(fmt.Sprintf("Session %s is the lead of task #%d and is in the main slot.", sid, id), map[string]string{"session": sid, "pane": pane})
-		}
-		if t.PendingLead != sid {
-			fmt.Fprintln(a.errOut)
-			return fmt.Errorf("the handoff to %s did not complete (lease is %s); see `agent-shiftboard task show %d`", sid, t.LeaseState, id)
-		}
-		fmt.Fprint(a.errOut, ".")
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Second):
-		}
-		_ = c.Sweep(ctx)
-	}
-	fmt.Fprintln(a.errOut)
-	return fmt.Errorf("no acknowledgement within %ds; look at the session's window, then use `agent-shiftboard handoff confirm %d` or start another lead", c.Policy.HandoffAckTimeoutSeconds, id)
-}
-
-func (a *app) resumeLead(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64) error {
-	if !actor.IsUser() {
-		return coord.ErrUserOnly
-	}
-	if !tmux.Available() {
-		return tmux.ErrNoTmux
-	}
-	t, err := c.GetTask(ctx, id)
-	if err != nil {
-		return err
-	}
-	if t.LeadSession == "" || (t.LeaseState != "held" && t.LeaseState != "suspended") {
-		return fmt.Errorf("task #%d has no lead to resume (lease %s); start one with `agent-shiftboard lead new %d`", id, t.LeaseState, id)
-	}
-	ss, err := c.ListSessions(ctx, id)
-	if err != nil {
-		return err
-	}
-	var s coord.Session
-	for _, x := range ss {
-		if x.ID == t.LeadSession {
-			s = x
-		}
-	}
-	if _, err := adapter.Get(s.Provider); err != nil {
-		return err
-	}
-	ws := tmux.New(tmux.Exec{}, c.Root)
-	if _, err := ws.Ensure(nil); err != nil {
-		return err
-	}
-	if alive, _ := ws.PaneAlive(s.PaneID); s.PaneID != "" && alive {
-		if err := ws.SwapIntoMainIfNeeded(s.PaneID); err != nil {
-			return err
-		}
-		return a.done("The lead's session is still running; it is in the main slot.", nil)
-	}
-	if mainHasLiveLead(ctx, c, ws) {
-		return errors.New("another live lead occupies the main slot; open that task or stop its CLI first")
-	}
-	if err := ws.RunInMain([]string{ws.Self, "start", "--task", fmt.Sprint(id)}); err != nil {
-		return err
-	}
-	return a.done(fmt.Sprintf("Resuming the lead of task #%d in the main slot. Run `agent-shiftboard` to open the workspace.", id), nil)
 }
 
 // writeLaunchContext writes the text a new session receives at launch and

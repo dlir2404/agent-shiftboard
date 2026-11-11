@@ -413,45 +413,33 @@ func (a *app) rootRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer c.Close()
 	ws := tmux.New(tmux.Exec{}, c.Root)
-	start := []string{ws.Self, "start"}
-	if taskID > 0 {
-		start = append(start, "--task", strconv.FormatInt(taskID, 10))
-	}
-	created, err := ws.Ensure(start)
-	if err == nil && !created && taskID > 0 {
-		err = a.placeStart(ctx, c, ws, start)
-	}
-	c.Close()
-	if err != nil {
+	if _, err := ws.Ensure(); err != nil {
 		return err
 	}
+	// First run (no open task): go straight into a lead, like `claude`.
+	// Otherwise land on the session list.
+	if !hasOpenTask(ctx, c) {
+		id, err := c.CreateTask(ctx, coord.User, coord.DraftTitle, "(not described yet: ask the user what they want)")
+		if err != nil {
+			return err
+		}
+		if _, err := a.openLead(ctx, c, ws, id, "new", "", true); err != nil {
+			return err
+		}
+	} else {
+		_ = ws.Home()
+	}
+	c.Close()
 	return attach(ws)
 }
 
-// placeStart runs a start loop in the main slot, unless a live lead is
-// there; then it opens it in a new, selected window.
-func (a *app) placeStart(ctx context.Context, c *coord.Coordinator, ws tmux.Workspace, start []string) error {
-	if !mainHasLiveLead(ctx, c, ws) {
-		return ws.RunInMain(start)
-	}
-	if _, err := ws.Launch("task", map[string]string{"AGENT_SHIFTBOARD_PROJECT": c.Root}, start); err != nil {
-		return err
-	}
-	_, err := ws.R.Run("select-window", "-t", ws.Session+":task")
-	return err
-}
-
-func mainHasLiveLead(ctx context.Context, c *coord.Coordinator, ws tmux.Workspace) bool {
-	main, err := ws.MainPane()
-	if err != nil {
-		return false
-	}
-	ss, _ := c.ListSessions(ctx, 0)
-	for _, s := range ss {
-		if s.PaneID == main && s.Status != "stopped" && s.Status != "failed" {
-			alive, _ := ws.PaneAlive(main)
-			return alive
+func hasOpenTask(ctx context.Context, c *coord.Coordinator) bool {
+	ts, _ := c.ListTasks(ctx)
+	for _, t := range ts {
+		if t.Status == "queued" || t.Status == "active" || t.Status == "blocked" {
+			return true
 		}
 	}
 	return false

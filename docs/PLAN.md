@@ -207,28 +207,19 @@ Each adapter exposes: detect/capability report, interactive launch and resume co
 ### Primary screen
 
 ```text
-┌──────────────────────────────────────────┬─────────────────────┐
-│                                          │ Task #12 cache      │
-│   LEAD'S NATIVE CLI (Claude/Codex/...)   │ Lead: Claude ●run   │
-│   the user types here directly;          │ Workers:            │
-│   native slash commands and approvals    │  Codex #13 idle     │
-│                                          │ Pending: 1 approval │
-│                                          │ Next: inspect inval.│
-├──────────────────────────────────────────┴─────────────────────┤
-│ [Lead: Claude · mode: default · brief r17]   ? help  w workers │
-└────────────────────────────────────────────────────────────────┘
+AgentShiftboard  ~/code/project  ● 1 running  ◐ 1 need you
+
+SESSIONS                                   │ PREVIEW
+▶ #4 README via Codex + goodbye.txt        │ codex worker A-1 · task #4
+    ○ claude  lead       idle              │ Status: ◐ asks to trust the folder
+    ◐ codex   worker A-1 asks to trust…    │ Assignment: Write README.md …
+    ! approval P-2 git push on origin main │ Output
+  #1 Create hello.txt and push             │ (live tail of the session's pane)
+
+enter open · s switch lead CLI · n new task   ↑↓ move · q leave
 ```
 
-The user's entry point is `agent-shiftboard`: it initializes the project if needed, creates or attaches to the workspace, and the main slot runs the lead's CLI right away, continuing the most recently updated open task or a new draft task. The user just talks to the lead; the lead describes the task (`task describe`) and may record further tasks (`task new`) from the conversation. One tmux session per project holds this layout (D-15). The left slot is the current lead's real CLI pane; the right pane is the Bubble Tea board; the bottom line names the lead's provider, permission mode, and brief revision. Closing the terminal detaches; reopening reattaches.
-
-On a lead change:
-
-1. The old lead's pane stays visible with its error while the board shows the classified status and offers: resume (wait-and-resume or resume by ID), a new session of the same provider, handoff to a configured successor of another provider, or later.
-2. Resume restarts the same slot with the native resume command (`respawn-pane`).
-3. A new session — same or other provider — shows reconciliation results and starts with the brief passed at launch: directly in the main slot when no live lead is there, otherwise in a hidden window that swaps into the main slot after readback acknowledgement; choosing the option is the user's confirmation.
-4. The old pane moves to a background window, viewable but not read by AgentShiftboard, until the user closes it.
-
-Worker panes open in a popup. The board always distinguishes task state from agent session status. It shows waiting-for-approval state, cooldown/reset information when known, stale-brief flags, proposed rules and delegations awaiting confirmation, held locks, the active worktree, and the lead lease state.
+The workspace is one tmux session per project on AgentShiftboard's own server (D-14, D-15). Its `home` window is this list; every lead and worker runs in its own window. `Enter` opens a session full screen and `Ctrl+Q` returns to the list. The first run with no open task goes straight into a new lead. When a lead's CLI exits, its window offers resume, switching to another CLI, a new task, or another task. The list shows waiting-for-approval and native prompts, cooldown/reset information when known, stale-brief flags, proposed rules and delegations, held locks, and the lead lease state, and distinguishes task state from session status.
 
 ### Initial command surface
 

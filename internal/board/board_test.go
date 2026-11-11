@@ -33,14 +33,18 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	}
 	c.Close()
 
-	m := model{open: open, width: 80}
-	m.snap = loadSnapshot(open, 0)
-	if m.snap.nSess != 1 || m.snap.items[0].kind != "session" {
-		t.Fatalf("expected the lead session first: %+v", m.snap.items)
+	m := model{open: open, width: 120, height: 40}
+	m.snap = loadSnapshot(open)
+	kinds := []string{}
+	for _, it := range m.snap.items {
+		kinds = append(kinds, it.kind)
 	}
-	m.cursor = m.snap.nSess // first item that needs the user
+	if strings.Join(kinds, ",") != "task,session,approval,rule" {
+		t.Fatalf("rows: %v", kinds)
+	}
+	m.cursor = 2 // the approval
 	v := m.View()
-	for _, want := range []string{"Task #1", "Sessions", "claude", "lead", "▶ ", "approval", "P-1", "rule", "R-1", "a approve"} {
+	for _, want := range []string{"SESSIONS", "PREVIEW", "#1", "claude", "lead", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -50,5 +54,17 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	msg := m.act(it, "a")()
 	if !strings.Contains(msg.(actionMsg).msg, "approved") {
 		t.Fatalf("action: %v", msg)
+	}
+}
+
+func TestNativePrompt(t *testing.T) {
+	if nativePrompt("Folder access\nTrust this folder? Codex can read...") == "" {
+		t.Fatal("codex trust prompt not detected")
+	}
+	if nativePrompt("Quick safety check: Is this a project you created or one you trust?") == "" {
+		t.Fatal("claude trust prompt not detected")
+	}
+	if nativePrompt("● wrote README.md") != "" {
+		t.Fatal("false positive")
 	}
 }

@@ -42,8 +42,8 @@ func (a *app) hookCmd() *cobra.Command {
 	}
 }
 
-// workspace opens (creating if needed) the project's tmux session and
-// attaches to it. With no subcommand, `agent-shiftboard` does this.
+// openWorkspace opens (creating if needed) the project's tmux session,
+// shows the task's lead when taskID is set, and attaches.
 func (a *app) openWorkspace(cmd *cobra.Command, taskID int64) error {
 	if !tmux.Available() {
 		return fmt.Errorf("%w; without it, use `agent-shiftboard board`", tmux.ErrNoTmux)
@@ -53,22 +53,11 @@ func (a *app) openWorkspace(cmd *cobra.Command, taskID int64) error {
 			return coord.ErrUserOnly
 		}
 		ws := tmux.New(tmux.Exec{}, c.Root)
-		created, err := ws.Ensure(nil)
-		if err != nil {
+		if _, err := ws.Ensure(); err != nil {
 			return err
 		}
-		_ = created
 		if taskID > 0 {
-			t, err := c.GetTask(ctx, taskID)
-			if err != nil {
-				return err
-			}
-			pane := leadPane(ctx, c, t)
-			if alive, _ := ws.PaneAlive(pane); pane != "" && alive {
-				if err := ws.SwapIntoMainIfNeeded(pane); err != nil {
-					return err
-				}
-			} else if err := a.placeStart(ctx, c, ws, []string{ws.Self, "start", "--task", fmt.Sprint(taskID)}); err != nil {
+			if _, err := a.openLead(ctx, c, ws, taskID, "auto", "", true); err != nil {
 				return err
 			}
 		}
@@ -99,8 +88,8 @@ func (a *app) openCmd() *cobra.Command {
 	}
 }
 
-// confirmSwap records the confirmation and moves the lead's pane into the
-// main slot (user operation).
+// confirmSwap records the confirmation and shows the lead's window
+// (user operation).
 func (a *app) confirmSwap(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64) error {
 	if err := c.ConfirmSwap(ctx, actor, id); err != nil {
 		return err
@@ -116,7 +105,7 @@ func (a *app) confirmSwap(ctx context.Context, c *coord.Coordinator, actor coord
 	if pane == "" || !tmux.Available() {
 		return fmt.Errorf("the lead of task #%d has no tmux pane", id)
 	}
-	return tmux.New(tmux.Exec{}, c.Root).SwapIntoMainIfNeeded(pane)
+	return tmux.New(tmux.Exec{}, c.Root).Show(pane)
 }
 
 // reconcilePanes marks sessions whose tmux pane vanished or whose process

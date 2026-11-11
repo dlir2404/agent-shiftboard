@@ -1,6 +1,8 @@
-// Package board is the Bubble Tea status board shown beside the lead's
-// native CLI pane. It is a view/controller over coordinator state; it holds
-// no durable state of its own (AGENTS.md).
+// Package board is the AgentShiftboard session list (the workspace's home
+// window): tasks with their lead and worker sessions and what needs the
+// user on the left, a live preview of the selected row on the right. It is
+// a view/controller over coordinator state and holds no durable state
+// (AGENTS.md).
 package board
 
 import (
@@ -21,23 +23,31 @@ import (
 // Opener opens the coordinator for one refresh or action.
 type Opener func(ctx context.Context) (*coord.Coordinator, error)
 
-// Refresh runs on every board refresh, e.g. to reconcile tmux panes.
-var Refresh func(ctx context.Context, c *coord.Coordinator)
-
-// Focus shows a session's pane in the main slot and gives it the keyboard;
-// MainPane reports which pane is in the main slot. Set by the workspace.
+// Workspace hooks, set by the CLI when running inside tmux.
 var (
-	Focus    func(pane string) error
-	MainPane func() string
+	// Refresh runs on every refresh, e.g. to reconcile tmux panes.
+	Refresh func(ctx context.Context, c *coord.Coordinator)
+	// Focus shows the window that holds pane.
+	Focus func(pane string) error
+	// OpenLead shows the task's lead, or starts one (mode auto|resume|new).
+	OpenLead func(taskID int64, mode, provider string) error
+	// NewTask creates a draft task and opens its lead.
+	NewTask func() error
+	// Leave detaches the user's terminal; sessions keep running.
+	Leave func()
+	// Capture returns the visible tail of a pane (display only, never stored).
+	Capture func(pane string, lines int) string
+	// Providers lists the CLIs a lead can be switched to.
+	Providers []string
 )
 
 // Run starts the board. It refuses to run inside a managed agent session,
 // because the board performs user operations.
-func Run(open Opener, taskID int64) error {
+func Run(open Opener, _ int64) error {
 	if !coord.ActorFromEnv().IsUser() {
 		return coord.ErrUserOnly
 	}
-	m := model{open: open, taskID: taskID, pinned: taskID > 0}
+	m := model{open: open}
 	if exe, err := os.Executable(); err == nil {
 		if st, err := os.Stat(exe); err == nil {
 			m.exe, m.exeMod = exe, st.ModTime()
@@ -54,47 +64,50 @@ func Run(open Opener, taskID int64) error {
 	return nil
 }
 
-// item is one thing on the board that needs the user.
+// item is one row: a task, a session, or something that needs the user.
 type item struct {
-	kind  string // session | approval | question | rule | delegation | review | effect | lock | stale
+	kind  string // task | session | approval | question | rule | delegation | review | effect | lock | stale
 	id    string
 	text  string
-	keys  string // available actions
+	keys  string // actions for this row
 	scope string
+	depth int
+	// task rows
+	task  coord.Task
+	brief coord.Brief
 	// session rows
 	pane, provider, role, status, reason, observed string
+	assignment                                     *coord.Assignment
+	output                                         string
 }
 
 type snapshot struct {
-	tasks    []coord.Task
-	task     coord.Task
-	brief    coord.Brief
-	sessions []coord.Session
-	items    []item // sessions first, then what needs the user
-	nSess    int
-	mainPane string
-	err      error
-	at       time.Time
+	items   []item
+	root    string
+	running int
+	waiting int
+	err     error
+	at      time.Time
 }
 
 type model struct {
-	open    Opener
-	taskID  int64
-	pinned  bool // the user picked a task with t; otherwise follow the latest
-	exe     string
-	exeMod  time.Time
-	restart bool
-	snap    snapshot
-	cursor  int
-	msg     string
-	width   int
-	height  int
-	input   *answerInput
+	open          Opener
+	snap          snapshot
+	cursor        int
+	msg           string
+	width, height int
+	input         *input
+	exe           string
+	exeMod        time.Time
+	restart       bool
+	selectedID    string // keeps the selection across refreshes
 }
 
-type answerInput struct {
-	id   string
-	text string
+type input struct {
+	purpose string // answer | provider
+	id      string
+	taskID  int64
+	text    string
 }
 
 type tickMsg time.Time
@@ -108,11 +121,11 @@ func tick() tea.Cmd {
 }
 
 func (m model) load() tea.Cmd {
-	open, taskID := m.open, m.taskID
-	return func() tea.Msg { return snapMsg(loadSnapshot(open, taskID)) }
+	open := m.open
+	return func() tea.Msg { return snapMsg(loadSnapshot(open)) }
 }
 
-func loadSnapshot(open Opener, taskID int64) snapshot {
+func loadSnapshot(open Opener) snapshot {
 	ctx := context.Background()
 	s := snapshot{at: time.Now()}
 	c, err := open(ctx)
@@ -121,58 +134,81 @@ func loadSnapshot(open Opener, taskID int64) snapshot {
 		return s
 	}
 	defer c.Close()
+	s.root = c.Root
 	if Refresh != nil {
 		Refresh(ctx, c)
 	}
-	if s.tasks, err = c.ListTasks(ctx); err != nil {
+	tasks, err := c.ListTasks(ctx)
+	if err != nil {
 		s.err = err
 		return s
 	}
-	if taskID == 0 {
-		latest := ""
-		for _, t := range s.tasks {
-			if (t.Status == "active" || t.Status == "blocked" || t.Status == "queued") && t.UpdatedAt > latest {
-				taskID, latest = t.ID, t.UpdatedAt
+	var openTasks []coord.Task
+	for _, t := range tasks {
+		if t.Status == "queued" || t.Status == "active" || t.Status == "blocked" {
+			openTasks = append(openTasks, t)
+		}
+	}
+	sort.SliceStable(openTasks, func(i, j int) bool { return openTasks[i].UpdatedAt > openTasks[j].UpdatedAt })
+	seen := map[string]bool{}
+	for _, t := range openTasks {
+		b, _ := c.GetBrief(ctx, t.ID)
+		s.items = append(s.items, item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
+			keys: "enter open lead · s switch lead CLI · n new task"})
+		ss, _ := c.ListSessions(ctx, t.ID)
+		as, _ := c.ListAssignments(ctx, t.ID)
+		var lead []item
+		var workers []item
+		for _, x := range ss {
+			if (x.Status == "stopped" || x.Status == "failed") && x.ID != t.LeadSession {
+				continue
+			}
+			role := x.Role
+			switch x.ID {
+			case t.LeadSession:
+				role = "lead"
+			case t.PendingLead:
+				role = "lead (new)"
+			}
+			it := item{kind: "session", id: x.ID, task: t, pane: x.PaneID, provider: x.Provider, role: role,
+				status: x.Status, reason: x.Reason, observed: x.ObservedAt, depth: 1, keys: "enter open"}
+			for i := range as {
+				if as[i].WorkerSession == x.ID {
+					it.assignment = &as[i]
+					it.role = "worker " + as[i].ID
+				}
+			}
+			if Capture != nil && x.PaneID != "" {
+				it.output = Capture(x.PaneID, 60)
+				if p := nativePrompt(it.output); p != "" {
+					it.status, it.reason = "waiting_for_approval", p
+					it.keys = "enter open and answer it"
+				}
+			}
+			switch it.status {
+			case "running", "retrying":
+				s.running++
+			case "waiting_for_approval":
+				s.waiting++
+			}
+			if strings.HasPrefix(role, "lead") {
+				lead = append(lead, it)
+			} else {
+				workers = append(workers, it)
 			}
 		}
-	}
-	if taskID == 0 {
-		return s
-	}
-	if s.task, err = c.GetTask(ctx, taskID); err != nil {
-		s.err = err
-		return s
-	}
-	s.brief, _ = c.GetBrief(ctx, taskID)
-	s.sessions, _ = c.ListSessions(ctx, taskID)
-	if MainPane != nil {
-		s.mainPane = MainPane()
-	}
-	for _, ss := range s.sessions {
-		if (ss.Status == "stopped" || ss.Status == "failed") && ss.ID != s.task.LeadSession {
-			continue
-		}
-		role := ss.Role
-		switch ss.ID {
-		case s.task.LeadSession:
-			role = "lead"
-		case s.task.PendingLead:
-			role = "lead (new)"
-		}
-		keys := "enter open"
-		if ss.PaneID == "" {
-			keys = ""
-		}
-		it := item{kind: "session", id: ss.ID, pane: ss.PaneID, provider: ss.Provider, role: role,
-			status: ss.Status, reason: ss.Reason, observed: ss.ObservedAt, keys: keys}
-		if role == "lead" {
-			s.items = append([]item{it}, s.items...)
-		} else {
-			s.items = append(s.items, it)
+		s.items = append(s.items, lead...)
+		s.items = append(s.items, workers...)
+		for _, n := range needsYou(ctx, c, t.ID) {
+			if seen[n.kind+n.id] {
+				continue
+			}
+			seen[n.kind+n.id] = true
+			n.depth, n.task = 1, t
+			s.items = append(s.items, n)
+			s.waiting++
 		}
 	}
-	s.nSess = len(s.items)
-	s.items = append(s.items, needsYou(ctx, c, taskID)...)
 	return s
 }
 
@@ -255,17 +291,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
-		if !m.pinned {
-			m.taskID = 0 // follow the most recently active task
-		}
 		return m, tea.Batch(m.load(), tick())
 	case snapMsg:
 		m.snap = snapshot(msg)
-		if m.taskID == 0 {
-			m.taskID = m.snap.task.ID
-		}
-		if m.cursor >= len(m.snap.items) {
-			m.cursor = max(0, len(m.snap.items)-1)
+		m.cursor = 0
+		for i, it := range m.snap.items {
+			if it.kind+it.id == m.selectedID {
+				m.cursor = i
+			}
 		}
 	case actionMsg:
 		m.msg = msg.msg
@@ -274,13 +307,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.input != nil {
 			return m.updateInput(msg)
 		}
+		m.msg = ""
 		switch msg.String() {
-		case "ctrl+c":
-			return m, tea.Quit
-		case "q":
-			if os.Getenv("TMUX_PANE") == "" {
-				return m, tea.Quit
+		case "ctrl+c", "q", "ctrl+q":
+			if Leave != nil {
+				Leave()
+				return m, nil
 			}
+			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -289,34 +323,67 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.snap.items)-1 {
 				m.cursor++
 			}
-		case "t":
-			m.taskID, m.pinned = nextTask(m.snap.tasks, m.taskID), true
-			m.cursor = 0
-			return m, m.load()
+		case "n":
+			if NewTask == nil {
+				m.msg = "new tasks need the tmux workspace"
+				break
+			}
+			return m, func() tea.Msg {
+				if err := NewTask(); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{msg: "new task started"}
+			}
 		default:
 			if it, ok := m.selected(); ok {
-				if it.kind == "session" && msg.String() == "enter" {
-					if Focus == nil || it.pane == "" {
-						m.msg = "this session has no pane in the workspace"
-						return m, nil
-					}
-					pane := it.pane
-					return m, func() tea.Msg {
-						if err := Focus(pane); err != nil {
-							return actionMsg{msg: "error: " + err.Error()}
-						}
-						return actionMsg{msg: "showing " + it.provider + " " + it.role + " · F2 returns here"}
-					}
-				}
-				if it.kind == "question" && msg.String() == "enter" {
-					m.input = &answerInput{id: it.id}
-					return m, nil
-				}
-				return m, m.act(it, msg.String())
+				return m.onKey(it, msg.String())
 			}
+		}
+		if it, ok := m.selected(); ok {
+			m.selectedID = it.kind + it.id
 		}
 	}
 	return m, nil
+}
+
+func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
+	switch {
+	case key == "enter" && it.kind == "task":
+		return m, openLead(it.task.ID, "auto", "")
+	case key == "enter" && it.kind == "session":
+		if it.pane != "" && Focus != nil {
+			pane := it.pane
+			return m, func() tea.Msg {
+				if err := Focus(pane); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{msg: ""}
+			}
+		}
+		if strings.HasPrefix(it.role, "lead") {
+			return m, openLead(it.task.ID, "auto", "")
+		}
+		m.msg = "this session has no window"
+	case key == "s" && (it.kind == "task" || strings.HasPrefix(it.role, "lead")):
+		m.input = &input{purpose: "provider", taskID: it.task.ID}
+	case key == "enter" && it.kind == "question":
+		m.input = &input{purpose: "answer", id: it.id}
+	default:
+		return m, m.act(it, key)
+	}
+	return m, nil
+}
+
+func openLead(taskID int64, mode, provider string) tea.Cmd {
+	return func() tea.Msg {
+		if OpenLead == nil {
+			return actionMsg{msg: "opening sessions needs the tmux workspace"}
+		}
+		if err := OpenLead(taskID, mode, provider); err != nil {
+			return actionMsg{msg: "error: " + err.Error()}
+		}
+		return actionMsg{msg: ""}
+	}
 }
 
 func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -324,13 +391,17 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.input = nil
 	case tea.KeyEnter:
-		id, text := m.input.id, m.input.text
+		in := *m.input
 		m.input = nil
+		text := strings.TrimSpace(in.text)
+		if in.purpose == "provider" {
+			return m, openLead(in.taskID, "new", text)
+		}
 		open := m.open
 		return m, func() tea.Msg {
 			return actionMsg{msg: runAction(open, func(ctx context.Context, c *coord.Coordinator) error {
-				return c.AnswerPending(ctx, coord.User, id, text)
-			}, id+" answered")}
+				return c.AnswerPending(ctx, coord.User, in.id, text)
+			}, in.id+" answered")}
 		}
 	case tea.KeyBackspace:
 		if r := []rune(m.input.text); len(r) > 0 {
@@ -343,7 +414,7 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) selected() (item, bool) {
-	if m.cursor < len(m.snap.items) {
+	if m.cursor >= 0 && m.cursor < len(m.snap.items) {
 		return m.snap.items[m.cursor], true
 	}
 	return item{}, false
@@ -390,96 +461,183 @@ func runAction(open Opener, fn func(ctx context.Context, c *coord.Coordinator) e
 	return done
 }
 
-func nextTask(ts []coord.Task, cur int64) int64 {
-	var open []int64
-	for _, t := range ts {
-		if t.Status != "done" && t.Status != "cancelled" {
-			open = append(open, t.ID)
-		}
-	}
-	if len(open) == 0 {
-		return cur
-	}
-	sort.Slice(open, func(i, j int) bool { return open[i] < open[j] })
-	for _, id := range open {
-		if id > cur {
-			return id
-		}
-	}
-	return open[0]
-}
-
 var (
 	title   = lipgloss.NewStyle().Bold(true)
 	dim     = lipgloss.NewStyle().Faint(true)
 	warn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	bad     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 	good    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	cursor  = lipgloss.NewStyle().Reverse(true).Bold(true)
+	accent  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	cursor  = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255")).Bold(true)
 	keyHint = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	header  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )
 
 func (m model) View() string {
 	s := m.snap
-	var b strings.Builder
 	if s.err != nil {
-		return bad.Render("error: "+s.err.Error()) + "\n\nq quit\n"
+		return bad.Render("error: "+s.err.Error()) + "\n"
 	}
-	if s.task.ID == 0 {
-		return "No open tasks. Create one with `agent-shiftboard run \"<task>\"`.\n\nq quit\n"
+	w, h := m.width, m.height
+	if w == 0 {
+		w, h = 100, 30
 	}
-	fmt.Fprintf(&b, "%s\n", title.Render(fmt.Sprintf("Task #%d %s", s.task.ID, trunc(s.task.Title, max(10, m.width-10)))))
-	fmt.Fprintf(&b, "%s · lease %s · brief r%d\n\n", s.task.Status, leaseStyle(s.task.LeaseState), s.task.BriefRevision)
+	top := fmt.Sprintf("%s  %s  %s  %s", accent.Render("AgentShiftboard"), dim.Render(trunc(s.root, 50)),
+		good.Render(fmt.Sprintf("● %d running", s.running)), warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)))
+	leftW := max(30, w*42/100)
+	rightW := max(20, w-leftW-3)
+	bodyH := max(5, h-4)
 
-	if na := s.brief.Fields.NextAction; na != "" {
-		fmt.Fprintf(&b, "%s %s\n", title.Render("Next:"), trunc(na, max(20, m.width-7)))
+	// Left: tasks, sessions, needs-you rows.
+	var left []string
+	left = append(left, header.Render("SESSIONS"))
+	if len(s.items) == 0 {
+		left = append(left, dim.Render("No open tasks. Press n to start one."))
 	}
-	if bl := s.brief.Fields.Blockers; len(bl) > 0 {
-		fmt.Fprintf(&b, "%s %s\n", warn.Render("Blocked:"), trunc(strings.Join(bl, "; "), max(20, m.width-10)))
-	}
-	fmt.Fprintln(&b)
-
-	row := func(i int, text string) {
-		mark := "  "
+	for i, it := range s.items {
+		line := rowText(it, leftW-2)
 		if i == m.cursor {
-			mark = "▶ "
-			text = cursor.Render(text)
+			line = cursor.Render(padRight("▶ "+stripLead(line), leftW))
 		}
-		fmt.Fprintln(&b, mark+text)
-		if i == m.cursor && s.items[i].keys != "" {
-			fmt.Fprintln(&b, "    "+keyHint.Render(s.items[i].keys))
-		}
+		left = append(left, line)
 	}
-	fmt.Fprintln(&b, title.Render("Sessions"))
-	if s.nSess == 0 {
-		fmt.Fprintln(&b, dim.Render("  none yet"))
+	if len(left) > bodyH {
+		start := min(max(0, m.cursor-bodyH/2), len(left)-bodyH)
+		left = left[start : start+bodyH]
 	}
-	w := max(20, m.width-4)
-	for i := 0; i < s.nSess; i++ {
-		it := s.items[i]
-		text := fmt.Sprintf("%-6s %-10s %s %s", it.provider, it.role, statusStyle(it.status), dim.Render(ago(it.observed)))
-		if it.pane != "" && it.pane == s.mainPane {
-			text += " " + good.Render("◀ shown")
-		}
-		row(i, trunc(text, w+40))
+
+	// Right: preview of the selected row.
+	right := header.Render("PREVIEW") + "\n"
+	if it, ok := m.selected(); ok {
+		right += preview(it, rightW, bodyH-1)
 	}
-	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, title.Render(fmt.Sprintf("Needs you (%d)", len(s.items)-s.nSess)))
-	if len(s.items) == s.nSess {
-		fmt.Fprintln(&b, dim.Render("  nothing"))
-	}
-	for i := s.nSess; i < len(s.items); i++ {
-		it := s.items[i]
-		row(i, fmt.Sprintf("%s %s %s", it.kind, it.id, trunc(it.text, max(10, w-len(it.kind)-len(it.id)-2))))
+
+	l := lipgloss.NewStyle().Width(leftW).Height(bodyH).Render(strings.Join(left, "\n"))
+	r := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(right)
+	sep := dim.Render(strings.Repeat("│\n", bodyH))
+	body := lipgloss.JoinHorizontal(lipgloss.Top, l, " ", sep, " ", r)
+
+	foot := dim.Render("↑↓ move · enter open · n new task · s switch lead CLI · q leave")
+	if it, ok := m.selected(); ok && it.keys != "" {
+		foot = keyHint.Render(it.keys) + dim.Render("   ↑↓ move · n new task · q leave")
 	}
 	if m.input != nil {
-		fmt.Fprintf(&b, "\nAnswer %s: %s█  (enter send · esc cancel)\n", m.input.id, m.input.text)
+		prompt := "Answer " + m.input.id
+		if m.input.purpose == "provider" {
+			prompt = "Switch the lead of task #" + fmt.Sprint(m.input.taskID) + " to (" + strings.Join(Providers, ", ") + ")"
+		}
+		foot = accent.Render(prompt+": ") + m.input.text + "█" + dim.Render("  enter ok · esc cancel")
+	} else if m.msg != "" {
+		foot = m.msg
 	}
-	if m.msg != "" {
-		fmt.Fprintf(&b, "\n%s\n", m.msg)
+	return top + "\n\n" + body + "\n" + foot
+}
+
+func rowText(it item, w int) string {
+	indent := strings.Repeat("  ", it.depth)
+	switch it.kind {
+	case "task":
+		t := it.task
+		return trunc(fmt.Sprintf("%s %s %s", title.Render(it.id), it.text, dim.Render("· "+t.Status)), w+30)
+	case "session":
+		state := it.status
+		if it.reason != "" && it.status == "waiting_for_approval" {
+			state = warn.Render(it.reason)
+		} else {
+			state = dim.Render(state)
+		}
+		return indent + trunc(fmt.Sprintf("%s %-7s %s %s", statusIcon(it.status), it.provider, it.role, state), w+30)
+	default:
+		return indent + warn.Render("! ") + trunc(fmt.Sprintf("%s %s %s", it.kind, it.id, it.text), w-len(indent)-2)
 	}
-	fmt.Fprintf(&b, "\n%s\n", dim.Render("↑↓ move · enter open · t other task · F2 here"))
+}
+
+func stripLead(s string) string { return strings.TrimLeft(s, " ") }
+
+func padRight(s string, w int) string {
+	if n := lipgloss.Width(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
+}
+
+func statusIcon(st string) string {
+	switch st {
+	case "running", "retrying":
+		return good.Render("●")
+	case "idle":
+		return dim.Render("○")
+	case "waiting_for_approval", "cooling_down", "starting":
+		return warn.Render("◐")
+	case "failed", "quota_unavailable", "authentication_required", "unknown":
+		return bad.Render("✕")
+	}
+	return dim.Render("·")
+}
+
+func preview(it item, w, h int) string {
+	var b strings.Builder
+	wrap := lipgloss.NewStyle().Width(w)
+	switch it.kind {
+	case "task":
+		t, f := it.task, it.brief.Fields
+		fmt.Fprintf(&b, "%s %s\n", title.Render(it.id), it.text)
+		fmt.Fprintf(&b, "%s · lead %s · brief r%d\n\n", t.Status, leaseStyle(t.LeaseState), t.BriefRevision)
+		if f.Goal != "" {
+			b.WriteString(wrap.Render(title.Render("Goal: ")+f.Goal) + "\n")
+		}
+		if f.NextAction != "" {
+			b.WriteString(wrap.Render(title.Render("Next: ")+f.NextAction) + "\n")
+		}
+		for _, x := range f.Blockers {
+			b.WriteString(wrap.Render(warn.Render("Blocked: ")+x) + "\n")
+		}
+		if len(f.Completed) > 0 {
+			b.WriteString("\n" + title.Render("Done") + "\n")
+			for _, x := range lastN(f.Completed, 5) {
+				b.WriteString(wrap.Render("• "+x) + "\n")
+			}
+		}
+		if len(f.Decisions) > 0 {
+			b.WriteString("\n" + title.Render("Decisions") + "\n")
+			for _, x := range lastN(f.Decisions, 5) {
+				b.WriteString(wrap.Render("• "+x) + "\n")
+			}
+		}
+	case "session":
+		fmt.Fprintf(&b, "%s %s · task %s\n", title.Render(it.provider), it.role, fmt.Sprintf("#%d", it.task.ID))
+		fmt.Fprintf(&b, "Status: %s %s %s\n", statusIcon(it.status), it.status, dim.Render(it.reason+" "+ago(it.observed)))
+		if a := it.assignment; a != nil {
+			b.WriteString(wrap.Render(title.Render("Assignment: ")+a.Scope) + "\n")
+			if a.Result != "" {
+				b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
+			}
+		}
+		b.WriteString("\n" + header.Render("Output") + "\n")
+		out := strings.TrimRight(it.output, "\n ")
+		lines := strings.Split(out, "\n")
+		room := max(3, h-strings.Count(b.String(), "\n")-1)
+		if len(lines) > room {
+			lines = lines[len(lines)-room:]
+		}
+		for _, l := range lines {
+			b.WriteString(trunc(l, w) + "\n")
+		}
+	default:
+		fmt.Fprintf(&b, "%s %s\n\n", title.Render(it.kind), it.id)
+		b.WriteString(wrap.Render(it.text) + "\n")
+		if it.keys != "" {
+			b.WriteString("\n" + keyHint.Render(it.keys) + "\n")
+		}
+	}
 	return b.String()
+}
+
+func lastN(xs []string, n int) []string {
+	if len(xs) > n {
+		return xs[len(xs)-n:]
+	}
+	return xs
 }
 
 func statusStyle(s string) string {
@@ -533,4 +691,20 @@ func trunc(s string, n int) string {
 		return string(r[:n-1]) + "…"
 	}
 	return s
+}
+
+// nativePrompt recognizes a provider CLI's own blocking prompt in the
+// visible pane (display only). AgentShiftboard never answers it; it only
+// tells the user that the session waits for them.
+func nativePrompt(screen string) string {
+	low := strings.ToLower(screen)
+	switch {
+	case strings.Contains(low, "trust this folder") || strings.Contains(low, "trust the files in this folder") || strings.Contains(low, "is this a project you created or one you trust"):
+		return "asks to trust the folder"
+	case strings.Contains(low, "/hooks") && strings.Contains(low, "review"):
+		return "asks to review hooks"
+	case strings.Contains(low, "please log in") || strings.Contains(low, "sign in"):
+		return "asks to log in"
+	}
+	return ""
 }

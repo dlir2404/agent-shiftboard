@@ -113,8 +113,18 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, a Actor, assignmentID 
 		if err := c.checkWrite(tx, taskID, a, accessLead); err != nil {
 			return err
 		}
-		if status != "assigned" || worker != "" {
-			return fmt.Errorf("assignment %s already has a worker or is %s", assignmentID, status)
+		if status != "assigned" && status != "running" {
+			return fmt.Errorf("assignment %s is %s", assignmentID, status)
+		}
+		if worker != "" {
+			// A worker that is gone can be replaced; a live one cannot.
+			var ws string
+			if err := tx.QueryRow(`SELECT status FROM sessions WHERE id=?`, worker).Scan(&ws); err == nil && ws != "stopped" && ws != "failed" {
+				return fmt.Errorf("assignment %s already has a live worker (%s)", assignmentID, ws)
+			}
+			if _, err := tx.Exec(`UPDATE assignments SET status='assigned' WHERE id=?`, n); err != nil {
+				return err
+			}
 		}
 		sid, err = c.insertSession(tx, taskID, spec)
 		if err != nil {

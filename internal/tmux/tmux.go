@@ -49,15 +49,15 @@ set -as terminal-features ",*:RGB"
 set -g extended-keys on
 set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
-set -g status-left " AgentShiftboard "
-set -g status-left-length 20
-set -g status-right " F2 board (↑↓ enter) · click to focus · Ctrl+Q leave "
+set -g status-left " AgentShiftboard · #W "
+set -g status-left-length 60
+set -g status-right " #{?#{==:#{window_name},home},↑↓ move · Enter open · q leave,Ctrl+Q back to the session list} "
 set -g status-right-length 80
 set -g window-status-format ""
 set -g window-status-current-format ""
 set -g pane-active-border-style "fg=colour39"
-bind -n C-q detach-client
-bind -n F2 select-window -t :main \; select-pane -t :main.1
+# Ctrl+Q: from a session, back to the session list; from the list, leave.
+bind -n C-q if-shell -F "#{==:#{window_name},home}" "detach-client" "select-window -t :home"
 `
 
 // WriteConfig writes Config to path and makes the server use it.
@@ -99,9 +99,6 @@ type Workspace struct {
 	Self    string // path of the agent-shiftboard binary
 }
 
-// MainSlot is the target of the lead slot (left pane of the main window).
-func (w Workspace) MainSlot() string { return w.Session + ":main.0" }
-
 var unsafe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 
 // SessionName derives a stable tmux session name from the project root.
@@ -129,40 +126,51 @@ func (w Workspace) Exists() bool {
 	return err == nil
 }
 
-// Ensure creates the session if it does not exist: the main window holds
-// the lead slot on the left, running mainCommand (normally
-// `agent-shiftboard start`, which asks for a task and runs the lead's CLI
-// right there), and the board on the right. The agent session variable is
-// never set in the session's global environment. It reports whether the
-// session was created.
-func (w Workspace) Ensure(mainCommand []string) (bool, error) {
+// Ensure creates the session if it does not exist. Its first window,
+// "home", runs the AgentShiftboard session list; every agent session gets a
+// window of its own. The agent session variable is never set in the
+// session's global environment. It reports whether the session was created.
+func (w Workspace) Ensure() (bool, error) {
 	if w.Exists() {
 		if ConfigPath != "" {
 			_, _ = w.R.Run("source-file", ConfigPath) // apply config changes from an upgrade
 		}
 		return false, nil
 	}
-	if len(mainCommand) == 0 {
-		mainCommand = []string{w.Self, "start"}
-	}
-	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "main", "-c", w.Root, "-x", "220", "-y", "60",
-		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, joinCommand(mainCommand)); err != nil {
+	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "home", "-c", w.Root, "-x", "220", "-y", "60",
+		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, shellQuote(w.Self)+" board"); err != nil {
 		return false, err
 	}
 	_, _ = w.R.Run("set-environment", "-t", w.Session, "-u", "AGENT_SHIFTBOARD_SESSION_ID")
-	_ = w.KeepOnExit(w.MainSlot())
-	if _, err := w.R.Run("split-window", "-h", "-d", "-l", "34%", "-t", w.Session+":main", "-c", w.Root,
-		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, shellQuote(w.Self)+" board"); err != nil {
-		return true, err
-	}
-	_, err := w.R.Run("select-pane", "-t", w.MainSlot())
-	return true, err
+	return true, nil
 }
 
-// RunInMain replaces whatever runs in the main slot with command.
-func (w Workspace) RunInMain(command []string) error {
-	_, err := w.R.Run("respawn-pane", "-k", "-t", w.MainSlot(), "-c", w.Root,
-		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, joinCommand(command))
+// OpenWindow starts command in a new window and returns its pane ID. With
+// show, the window becomes the current one.
+func (w Workspace) OpenWindow(name string, env map[string]string, command []string, show bool) (string, error) {
+	args := []string{"new-window", "-P", "-F", "#{pane_id}", "-t", w.Session + ":", "-n", name, "-c", w.Root}
+	if !show {
+		args = append(args, "-d")
+	}
+	for _, k := range sortedKeys(env) {
+		args = append(args, "-e", k+"="+env[k])
+	}
+	pane, err := w.R.Run(append(args, joinCommand(command))...)
+	if err == nil {
+		_ = w.KeepOnExit(pane)
+	}
+	return pane, err
+}
+
+// Show makes the window that holds pane the current one.
+func (w Workspace) Show(pane string) error {
+	_, err := w.R.Run("select-window", "-t", pane)
+	return err
+}
+
+// Home shows the session list.
+func (w Workspace) Home() error {
+	_, err := w.R.Run("select-window", "-t", w.Session+":home")
 	return err
 }
 
@@ -189,26 +197,6 @@ func (w Workspace) Launch(name string, env map[string]string, command []string) 
 func (w Workspace) KeepOnExit(pane string) error {
 	_, err := w.R.Run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
 	return err
-}
-
-// MainPane returns the pane ID currently in the main slot.
-func (w Workspace) MainPane() (string, error) {
-	return w.R.Run("display-message", "-p", "-t", w.MainSlot(), "#{pane_id}")
-}
-
-// SwapIntoMain moves pane into the main slot; the pane that was there moves
-// to pane's old window, where it stays alive.
-func (w Workspace) SwapIntoMain(pane string) error {
-	_, err := w.R.Run("swap-pane", "-d", "-s", pane, "-t", w.MainSlot())
-	return err
-}
-
-// SwapIntoMainIfNeeded swaps pane into the main slot unless it is already there.
-func (w Workspace) SwapIntoMainIfNeeded(pane string) error {
-	if cur, err := w.MainPane(); err == nil && cur == pane {
-		return nil
-	}
-	return w.SwapIntoMain(pane)
 }
 
 // Respawn restarts a pane with a new command (native resume), keeping its

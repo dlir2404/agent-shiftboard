@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dlir2404/agent-shiftboard/internal/adapter"
 	"github.com/dlir2404/agent-shiftboard/internal/board"
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/tmux"
@@ -24,20 +26,38 @@ func (a *app) boardCmd() *cobra.Command {
 			root := c.Root
 			c.Close()
 			board.Refresh = reconcilePanes
-			if tmux.Available() {
+			if tmux.Available() && os.Getenv("TMUX") != "" {
 				ws := tmux.New(tmux.Exec{}, root)
 				if tmux.ConfigPath != "" && ws.Exists() {
 					_, _ = ws.R.Run("source-file", tmux.ConfigPath) // keys from an upgrade
 				}
-				board.Focus = func(pane string) error {
-					if err := ws.SwapIntoMainIfNeeded(pane); err != nil {
+				board.Focus = ws.Show
+				board.Capture = func(pane string, lines int) string { return mustOut(ws.Capture(pane, lines)) }
+				board.Leave = func() { _, _ = ws.R.Run("detach-client") }
+				board.OpenLead = func(taskID int64, mode, provider string) error {
+					c, err := a.open(context.Background())
+					if err != nil {
 						return err
 					}
-					_, err := ws.R.Run("select-pane", "-t", ws.MainSlot())
+					defer c.Close()
+					_, err = a.openLead(context.Background(), c, ws, taskID, mode, provider, true)
 					return err
 				}
-				board.MainPane = func() string { p, _ := ws.MainPane(); return p }
+				board.NewTask = func() error {
+					c, err := a.open(context.Background())
+					if err != nil {
+						return err
+					}
+					defer c.Close()
+					id, err := c.CreateTask(context.Background(), coord.User, coord.DraftTitle, "(not described yet: ask the user what they want)")
+					if err != nil {
+						return err
+					}
+					_, err = a.openLead(context.Background(), c, ws, id, "new", "", true)
+					return err
+				}
 			}
+			board.Providers = adapter.Names()
 			return board.Run(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) }, a.task)
 		},
 	}

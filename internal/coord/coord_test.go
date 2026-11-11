@@ -427,3 +427,14 @@ func TestAgentCreatesAndDescribesTasks(t *testing.T) {
 	pid := must(f.c.AddPending(f.ctx, lead, id, "approval", "git push origin main (commit abc)", "origin main @ abc", 0))
 	ok(t, f.c.RecordApproval(f.ctx, lead, pid, "", "", "ok push"))
 }
+
+func TestReplaceDeadWorker(t *testing.T) {
+	f := newFixture(t)
+	id, lead := f.startLead(t)
+	aid := must(f.c.CreateAssignment(f.ctx, lead, AssignmentInput{TaskID: id, Scope: "x"}))
+	w1 := must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"}))
+	_, err := f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"})
+	fails(t, err, "live worker")
+	ok(t, f.c.Observe(f.ctx, User, w1, "stopped", "host_lost", "process"))
+	must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"}))
+}
