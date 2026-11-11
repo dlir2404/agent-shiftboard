@@ -244,6 +244,7 @@ func LaunchContext(v View, sessionID string, readback []string) string {
 - When the user states a durable rule ("always ask before pushing"), record it with rule add --scope user|project|task --source "user in chat".
 - When a rule or common sense requires the user's approval: open it with pending add --kind approval --target <target> <action>, ask the user in chat, and when they clearly approve, record it with pending record-approval <P-id> --quote "<their words>". Never treat silence or a similar earlier approval as approval.
 - Never ask the user to run agent-shiftboard commands through your shell (for example with "!"): those run as you. The user approves on the AgentShiftboard board (right pane) or simply in chat.
+- To hand part of the work to another agent (the user may ask for a specific CLI such as Codex): agent-shiftboard delegate --expected "<output>" "<scope>" creates A-n, then agent-shiftboard worker start A-n --provider claude|codex starts it in its own window. You will see its submitted result on a later turn; accept or reject it with assignment accept|reject.
 - Check the shared tools below before writing a helper script; register reusable helpers with tool register. Never write secret values into task state; use secret references.
 
 `)
