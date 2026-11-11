@@ -8,7 +8,7 @@ The durable memory is a concise task brief authored and maintained by the lead a
 
 ## Status
 
-Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MCP server, status board) is in place with tests. The Phase 2 Claude Code adapter and tmux workspace are implemented and partly validated live (launch in the visible main slot, folder-trust prompt, exit menu); hooks and resume are still to be validated; see [Phase 0 findings](docs/SPIKE-PHASE0.md#still-to-validate-live).
+Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MCP server, status board) is in place. The Claude Code adapter and tmux workspace are implemented and partly validated live (launch in the visible main slot, folder-trust prompt, exit menu); hooks and resume are still to be validated. The Codex interactive adapter is now implemented against the current documented hook and config interfaces; live hook trust, launch-context delivery, MCP approval, and resume remain unvalidated. See [Phase 0 findings](docs/SPIKE-PHASE0.md#still-to-validate-live).
 
 ## Quick start
 

@@ -178,10 +178,13 @@ This is local coordinator policy, not distributed consensus. The database lease 
 
 ### Codex CLI
 
-- As lead, run the native `codex` TUI in tmux; use its documented notify/hook mechanism plus pane classification for status, and capture the thread/session ID from documented sources only. Validate in Phase 0, including whether intent enforcement is possible; otherwise mark it `unknown`.
-- For managed headless workers, prefer `codex app-server` for persistent threads, streamed events, interrupts, and approval handling.
-- Use `codex exec` for bounded worker tasks where a persistent thread is unnecessary.
-- Keep app-server protocol/version handling isolated in the Codex adapter; persist thread ID for resume.
+- Run the native interactive `codex` TUI in tmux for leads and interactive workers. Use `-C` and per-invocation `-c` overrides to attach AgentShiftboard's MCP server and lifecycle hooks without editing `config.toml`.
+- Capture Codex's native session ID from the documented `session_id` hook field; Codex does not expose a pre-assigned ID flag. Resume with `codex resume <id>` and the same scoped MCP/hook overrides.
+- Use `SessionStart.additionalContext` to deliver the generated launch brief as extra developer context. Do not set `model_instructions_file`, which replaces Codex's built-in instructions, or overwrite the user's `developer_instructions` setting.
+- Observe `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `Stop`, `Interrupt`, and `PreCompact`. Enforce external-action intents through `PreToolUse`; do not infer quota failures from unstable model-request error text.
+- Codex requires a user to review and trust new or changed non-managed hooks in `/hooks`. Preserve that trust flow and never pass `--dangerously-bypass-hook-trust`.
+- Auto-approve only the AgentShiftboard MCP server's explicit read and agent-operation allowlist, which excludes user-only operations. Leave Codex's other native approval and sandbox settings intact; map an explicit `providers.codex.permission_mode` only to supported approval policies.
+- Keep `codex app-server` and `codex exec` as future documented options for bounded headless workers. They are not the lead-session path in D-14.
 
 ### Google Antigravity CLI (Phase 5)
 
@@ -278,14 +281,14 @@ Refine the command surface during the integration spike.
 ### Phase 2 — Native lead and same-provider continuity
 
 - Implement the Claude Code or Codex adapter end-to-end, whichever the Phase 0 spike shows is more ready.
-- Start/resume the lead in the main slot with a pre-assigned session ID, report hook-based status, interrupt it, and record the native session ID.
+- Start/resume the lead in the main slot with a pre-assigned native session ID where supported, otherwise capture it from provider hooks; report hook-based status and interrupt it.
 - Add stop/failure classification for this adapter (quota with or without reset time, authentication, context limit, network/service, crash, host loss).
 - Add stale-brief detection and nudges (D-17) and side-effect intent enforcement where the provider supports it.
 - Add same-provider continuity: wait-and-resume after cooldown, resume after host loss or crash, and a fresh session with readback after a context limit.
 
 ### Phase 3 — Second provider and independent workers
 
-- Add the other of Claude Code and Codex behind the adapter interface, including its stop/failure classification.
+- Finish and validate the second Claude Code/Codex adapter behind the shared interface, including its hook payloads, native resume, and status mapping. The Codex adapter is implemented from current docs but has not had a live session validation.
 - Delegate scoped assignments to separate sessions of the same or a different provider, interactive or headless.
 - Add per-task worktrees for concurrent code edits; support read-only shared checkout only for explicitly read-only review tasks.
 - Add named advisory locks (D-20).

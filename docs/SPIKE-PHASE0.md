@@ -37,10 +37,14 @@ Design consequence: launch the lead as
 - Interactive by default; `[PROMPT]` positional starts the session with an initial prompt.
 - `codex resume [SESSION_ID] [PROMPT]` — resume by UUID or name; `codex fork` exists.
 - `-c key=value` overrides any `~/.codex/config.toml` value per invocation — the channel for per-session hooks/notify and MCP server configuration without editing the user's config.
-- `codex features list` reports `hooks  stable  true`: Codex has a stable hooks feature. Its event names and payloads must be checked live.
-- Approval: `-a/--ask-for-approval <policy>`, `-s/--sandbox <mode>`. Dangerous flags exist (`--dangerously-bypass-approvals-and-sandbox`, `--approve-for-me`, `--dangerously-bypass-hook-trust`); AgentShiftboard never passes them by default.
+- `codex features list` reports `hooks  stable  true`. The current official hook reference documents `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PermissionRequest`, `PreCompact`, `Stop`, and `Interrupt`; hook input includes `session_id`, and `SessionStart` includes a `source` value (`startup`, `resume`, `clear`, `compact`, or `fork`).
+- `SessionStart` and `UserPromptSubmit` accept `hookSpecificOutput.additionalContext`; Codex adds it as extra developer context. The handler injects the launch brief at startup and retries it on the first trusted user-prompt hook if startup trust review delayed injection, without duplicating it. Compaction re-injects the current brief; no transcript is read.
+- `PreToolUse` receives `tool_name` and `tool_input`, and can deny with `hookSpecificOutput.permissionDecision="deny"`, matching the shared handler's existing response shape. `PermissionRequest` can observe normal prompts; the adapter does not decide or auto-approve them.
+- Codex requires a user to review and trust each new or changed non-managed hook through `/hooks`; untrusted hooks are skipped. AgentShiftboard must not pass `--dangerously-bypass-hook-trust`.
+- MCP config supports a per-server stdio `command`, `args`, `cwd`, `env`, `enabled_tools`, and `default_tools_approval_mode`. The adapter scopes `auto` approval to its explicit AgentShiftboard agent-operation allowlist; Codex's other permission and sandbox settings remain native.
+- Approval: `-a/--ask-for-approval <policy>`, `-s/--sandbox <mode>`. The current config reference says `on-request` is the interactive approval policy, `never` is non-interactive, and `untrusted` is unsupported. AgentShiftboard only maps the explicit `on-request` setting; it leaves the sandbox native. Dangerous flags exist (`--dangerously-bypass-approvals-and-sandbox`, `--approve-for-me`, `--dangerously-bypass-hook-trust`); AgentShiftboard never passes them by default.
 - `--no-alt-screen` may help pane classification in tmux.
-- **Open question:** there is no documented flag to pre-assign a session ID. The ID must be captured from a hook payload or another documented source (D-14 allows this).
+- There is no documented flag to pre-assign a session ID. The adapter captures it from the hook payload and resumes with `codex resume <id>`.
 
 ## Antigravity CLI `agy` (1.4.10, Phase 5)
 
@@ -63,6 +67,6 @@ Design consequence: launch the lead as
 Needs tmux and a few short model turns, so the user should be present:
 
 1. Claude: hooks fire with the expected payloads in an interactive tmux pane; `PermissionRequest`/`Notification` arrive when a prompt shows; `--resume` restores a session after the pane is killed.
-2. Codex: hook event names/payloads via `-c`; where the session ID appears; `codex resume <id>`.
+2. Codex: validate that command-line hook overrides trigger with expected payloads, that `/hooks` trust review is clear to the user, that the launch brief arrives before the initial turn, that the MCP allowlist works, and that `codex resume <id>` restores the same native thread. No live Codex session has been started for this spike.
 3. tmux: server lifetime across terminal close, sleep, and logout on macOS; `swap-pane`/`respawn-pane` behaviour with a running CLI.
-4. Per-provider allowlists: which permission rule format keeps `agent-shiftboard` state commands from prompting.
+4. Claude allowlist behavior and Codex's per-server MCP approval behavior in an interactive session, while confirming all non-AgentShiftboard permissions still use Codex's native settings.

@@ -27,10 +27,12 @@ type LaunchSpec struct {
 
 // Env returns the environment for the session's window and MCP server.
 func (s LaunchSpec) Env() map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"AGENT_SHIFTBOARD_SESSION_ID": s.SessionID,
 		"AGENT_SHIFTBOARD_PROJECT":    s.Root,
+		LaunchContextEnv:              s.LaunchContext,
 	}
+	return env
 }
 
 // claudeHookEvents are the events AgentShiftboard listens to (see

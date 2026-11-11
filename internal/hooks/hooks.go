@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -51,7 +52,7 @@ func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor co
 	}
 	sid := actor.SessionID
 
-	if in.HookEventName == "SessionStart" && in.SessionID != "" {
+	if in.SessionID != "" {
 		report(stderr, c.SetSessionRuntime(ctx, sid, "", 0, in.SessionID))
 	}
 	obs := p.Observe(in, now)
@@ -73,6 +74,13 @@ func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor co
 		}
 	case "UserPromptSubmit":
 		var msgs []string
+		if p.LaunchContextEvent(in) {
+			if msg, err := launchContextOnce(os.Getenv(adapter.LaunchContextEnv)); err != nil {
+				report(stderr, err)
+			} else if msg != "" {
+				msgs = append(msgs, msg)
+			}
+		}
 		if msg := staleNudge(ctx, c, sid); msg != "" {
 			msgs = append(msgs, msg)
 		}
@@ -83,6 +91,13 @@ func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor co
 			return additionalContext("UserPromptSubmit", strings.Join(msgs, "\n\n"))
 		}
 	case "SessionStart":
+		if p.LaunchContextEvent(in) {
+			if msg, err := launchContextOnce(os.Getenv(adapter.LaunchContextEnv)); err != nil {
+				report(stderr, err)
+			} else if msg != "" {
+				return additionalContext("SessionStart", msg)
+			}
+		}
 		// After compaction or /clear the model loses detail; give it the
 		// current brief again (never transcript content).
 		if in.Source == "compact" || in.Source == "clear" {
@@ -92,6 +107,54 @@ func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor co
 		}
 	}
 	return Result{}
+}
+
+// launchContextOnce returns the generated startup context once per managed
+// session. The small marker lets UserPromptSubmit recover if Codex skipped
+// an untrusted startup hook and the user trusted it later through /hooks.
+func launchContextOnce(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	marker := path + ".delivered"
+	if _, err := os.Stat(marker); err == nil {
+		return "", nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("agent-shiftboard hook: cannot check launch-context marker: %w", err)
+	}
+	msg, err := launchContextFile(path)
+	if err != nil || msg == "" {
+		return msg, err
+	}
+	f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil && !os.IsExist(err) {
+		return "", fmt.Errorf("agent-shiftboard hook: cannot mark launch context as delivered: %w", err)
+	}
+	if err == nil {
+		if closeErr := f.Close(); closeErr != nil {
+			return "", fmt.Errorf("agent-shiftboard hook: cannot close launch-context marker: %w", closeErr)
+		}
+	}
+	return msg, nil
+}
+
+func launchContextFile(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("agent-shiftboard hook: cannot read launch context: %w", err)
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.LimitReader(f, 256*1024+1))
+	if err != nil {
+		return "", fmt.Errorf("agent-shiftboard hook: cannot read launch context: %w", err)
+	}
+	if len(b) > 256*1024 {
+		return "", fmt.Errorf("agent-shiftboard hook: launch context exceeds 256 KiB")
+	}
+	return strings.TrimSpace(string(b)), nil
 }
 
 func report(w io.Writer, err error) {
@@ -149,7 +212,7 @@ func MatchExternal(c *coord.Coordinator, toolName, command string) string {
 		}
 		return ""
 	}
-	if strings.HasPrefix(toolName, "mcp__agent-shiftboard__") {
+	if strings.HasPrefix(toolName, "mcp__agent-shiftboard__") || strings.HasPrefix(toolName, "mcp__agent_shiftboard__") {
 		return ""
 	}
 	for _, p := range c.Policy.ExternalActions.MCPTools {

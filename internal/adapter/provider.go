@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+// LaunchContextEnv points to the coordinator-generated launch brief. Codex
+// reads it from lifecycle hooks because it has no per-session system prompt
+// flag that preserves the user's existing developer instructions.
+const LaunchContextEnv = "AGENT_SHIFTBOARD_LAUNCH_CONTEXT"
+
 // Provider is one coding-agent CLI behind the adapter boundary.
 type Provider interface {
 	Name() string
@@ -20,6 +25,9 @@ type Provider interface {
 	Resume(s LaunchSpec) ([]string, error)
 	// Observe maps one hook payload to a status observation.
 	Observe(h HookInput, now time.Time) Observation
+	// LaunchContextEvent reports whether this event should receive the
+	// persisted launch brief as provider-injected context.
+	LaunchContextEvent(h HookInput) bool
 }
 
 var providers = map[string]Provider{}
@@ -51,5 +59,6 @@ func (claude) PreassignsID() bool                             { return true }
 func (claude) Launch(s LaunchSpec) ([]string, error)          { return ClaudeLaunch(s) }
 func (claude) Resume(s LaunchSpec) ([]string, error)          { return ClaudeResume(s) }
 func (claude) Observe(h HookInput, now time.Time) Observation { return ClaudeObservation(h, now) }
+func (claude) LaunchContextEvent(HookInput) bool              { return false }
 
 func init() { register(claude{}) }
