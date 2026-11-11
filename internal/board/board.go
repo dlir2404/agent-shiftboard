@@ -154,7 +154,7 @@ func loadSnapshot(open Opener) snapshot {
 	for _, t := range openTasks {
 		b, _ := c.GetBrief(ctx, t.ID)
 		s.items = append(s.items, item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
-			keys: "enter open lead · s switch lead CLI · n new task"})
+			keys: "→/enter open lead · s switch lead CLI · n new task"})
 		ss, _ := c.ListSessions(ctx, t.ID)
 		as, _ := c.ListAssignments(ctx, t.ID)
 		var lead []item
@@ -171,7 +171,7 @@ func loadSnapshot(open Opener) snapshot {
 				role = "lead (new)"
 			}
 			it := item{kind: "session", id: x.ID, task: t, pane: x.PaneID, provider: x.Provider, role: role,
-				status: x.Status, reason: x.Reason, observed: x.ObservedAt, depth: 1, keys: "enter open"}
+				status: x.Status, reason: x.Reason, observed: x.ObservedAt, depth: 1, keys: "→/enter open · Shift+← comes back"}
 			for i := range as {
 				if as[i].WorkerSession == x.ID {
 					it.assignment = &as[i]
@@ -186,7 +186,7 @@ func loadSnapshot(open Opener) snapshot {
 				it.pane = ""
 			}
 			if gone && strings.HasPrefix(role, "lead") {
-				it.keys = "enter resume"
+				it.keys = "→/enter resume"
 			}
 			if Capture != nil && it.pane != "" {
 				it.output = Capture(it.pane, 60)
@@ -357,6 +357,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
+	if key == "right" || key == "l" {
+		if it.kind != "task" && it.kind != "session" {
+			return m, nil
+		}
+		key = "enter"
+	}
 	switch {
 	case key == "enter" && it.kind == "task":
 		return m, openLead(it.task.ID, "auto", "")
@@ -527,7 +533,7 @@ func (m model) View() string {
 	sep := dim.Render(strings.Repeat("│\n", bodyH))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, l, " ", sep, " ", r)
 
-	foot := dim.Render("↑↓ move · enter open · n new task · s switch lead CLI · q leave")
+	foot := dim.Render("↑↓ move · →/enter open · n new task · s switch lead CLI · q leave")
 	if it, ok := m.selected(); ok && it.keys != "" {
 		foot = keyHint.Render(it.keys) + dim.Render("   ↑↓ move · n new task · q leave")
 	}

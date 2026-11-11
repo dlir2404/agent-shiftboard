@@ -51,13 +51,15 @@ set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
 set -g status-left " AgentShiftboard · #W "
 set -g status-left-length 60
-set -g status-right " #{?#{==:#{window_name},home},↑↓ move · Enter open · q leave,Ctrl+Q back to the session list} "
+set -g status-right " #{?#{==:#{window_name},home},↑↓ move · → open · q leave,Shift+← or Ctrl+Q: back to the session list} "
 set -g status-right-length 80
 set -g window-status-format ""
 set -g window-status-current-format ""
 set -g pane-active-border-style "fg=colour39"
 # Ctrl+Q: from a session, back to the session list; from the list, leave.
 bind -n C-q if-shell -F "#{==:#{window_name},home}" "detach-client" "select-window -t :home"
+# Shift+Left: back to the session list (plain Left stays with the CLI's prompt).
+bind -n S-Left if-shell -F "#{==:#{window_name},home}" "send-keys S-Left" "select-window -t :home"
 `
 
 // WriteConfig writes Config to path and makes the server use it.
