@@ -44,7 +44,7 @@ func TestEnsureBuildsLayoutWithoutSessionEnv(t *testing.T) {
 		t.Fatalf("session env must not be set globally:\n%s", joined)
 	}
 	f.calls, f.exists = nil, true
-	if created, err := w.Ensure(); err != nil || created || len(f.calls) != 1 {
+	if created, err := w.Ensure(); err != nil || created || len(f.calls) != 2 || f.calls[1][0] != "resize-pane" {
 		t.Fatalf("existing session should be reused: %v %v", err, f.calls)
 	}
 }

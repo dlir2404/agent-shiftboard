@@ -60,6 +60,9 @@ set -g pane-active-border-style "fg=colour39"
 bind -n S-Left select-window -t :main \; select-pane -t :main.0
 bind -n S-Right select-window -t :main \; select-pane -t :main.1
 bind -n C-q detach-client
+# Keep the session list at a fixed width whatever the terminal size.
+set-hook -g client-attached "resize-pane -t :main.0 -x 38"
+set-hook -g client-resized "resize-pane -t :main.0 -x 38"
 `
 
 // WriteConfig writes Config to path and makes the server use it.
@@ -142,6 +145,7 @@ func (w Workspace) Ensure() (bool, error) {
 		if ConfigPath != "" {
 			_, _ = w.R.Run("source-file", ConfigPath) // apply config changes from an upgrade
 		}
+		_, _ = w.R.Run("resize-pane", "-t", w.Session+":main.0", "-x", fmt.Sprint(ListWidth))
 		return false, nil
 	}
 	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "main", "-c", w.Root, "-x", "220", "-y", "60",
