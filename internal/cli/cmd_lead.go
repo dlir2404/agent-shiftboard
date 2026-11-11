@@ -175,6 +175,12 @@ func writeLaunchContext(ctx context.Context, c *coord.Coordinator, taskID int64,
 		return "", "", err
 	}
 	text := render.LaunchContext(v, sid, ids)
+	ss, _ := c.ListSessions(ctx, taskID)
+	for _, s := range ss {
+		if s.ID == sid {
+			text += render.ProviderNote(s.Provider)
+		}
+	}
 	p := filepath.Join(sessionDir(c.Root, sid), "launch.md")
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return "", "", err

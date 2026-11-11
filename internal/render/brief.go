@@ -279,3 +279,13 @@ Working rules:
 	b.WriteString(Markdown(v, 0))
 	return b.String()
 }
+
+// ProviderNote adds provider-specific guidance to a launch context.
+func ProviderNote(provider string) string {
+	if provider != "codex" {
+		return ""
+	}
+	return `
+Codex note: use the AgentShiftboard MCP tools (shiftboard_*, for example shiftboard_handoff_ack, shiftboard_brief_update, shiftboard_effect_plan, shiftboard_assignment_submit) for every AgentShiftboard operation. They are pre-approved. The agent-shiftboard shell command writes to a database outside your sandbox and would need an approval each time.
+`
+}

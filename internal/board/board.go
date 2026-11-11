@@ -544,7 +544,7 @@ func (m model) View() string {
 	b.WriteString(strings.Join(rows, "\n") + "\n")
 	b.WriteString(dim.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString(detail)
-	foot := dim.Render("↑↓ · →/enter open · n new task · s switch lead")
+	foot := dim.Render("● running ○ idle ◐ needs you ■ exited\n↑↓ · →/enter open · n new task · s switch lead")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
@@ -572,6 +572,21 @@ func compactDetail(it item, w int) string {
 		for _, x := range f.Blockers {
 			b.WriteString(wrap.Render(warn.Render("Blocked: ")+x) + "\n")
 		}
+		if f.Goal != "" {
+			b.WriteString(wrap.Render(title.Render("Goal: ")+f.Goal) + "\n")
+		}
+		if len(f.Completed) > 0 {
+			b.WriteString(title.Render("Done") + "\n")
+			for _, x := range lastN(f.Completed, 4) {
+				b.WriteString(wrap.Render("• "+x) + "\n")
+			}
+		}
+		if len(f.Decisions) > 0 {
+			b.WriteString(title.Render("Decisions") + "\n")
+			for _, x := range lastN(f.Decisions, 4) {
+				b.WriteString(wrap.Render("• "+x) + "\n")
+			}
+		}
 	case "session":
 		st := it.status
 		if it.reason != "" {
@@ -579,7 +594,7 @@ func compactDetail(it item, w int) string {
 		}
 		b.WriteString(wrap.Render(fmt.Sprintf("%s %s: %s %s", it.provider, it.role, st, dim.Render(ago(it.observed)))) + "\n")
 		if a := it.assignment; a != nil {
-			b.WriteString(wrap.Render(title.Render("Task: ")+a.Scope) + "\n")
+			b.WriteString(wrap.Render(title.Render("Assignment "+a.ID+": ")+a.Scope) + "\n")
 			if a.Result != "" {
 				b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
 			}
@@ -599,16 +614,35 @@ func rowText(it item, w int) string {
 	case "task":
 		return " " + trunc(title.Render(it.id)+" "+it.text, w+20)
 	case "session":
-		label := it.provider + " " + it.role
-		if it.assignment != nil && it.assignment.Status == "submitted" {
-			label += " " + good.Render("✓")
-		} else if it.reason != "" && it.status == "waiting_for_approval" {
-			label += " " + warn.Render("needs you")
-		}
+		label := it.provider + " " + sessionLabel(it)
 		return indent + statusIcon(it.status) + " " + trunc(label, w-len(indent)+20)
 	default:
 		return indent + warn.Render("!") + " " + trunc(it.kind+" "+it.id+" "+it.text, w-len(indent)-2)
 	}
+}
+
+// sessionLabel says in words what a session is doing.
+func sessionLabel(it item) string {
+	role := "lead"
+	if it.assignment != nil {
+		role = "worker: " + it.assignment.Scope
+	} else if !strings.HasPrefix(it.role, "lead") {
+		role = it.role
+	}
+	var state string
+	switch {
+	case it.assignment != nil && it.assignment.Status == "submitted":
+		state = good.Render("done, lead reviews")
+	case it.reason != "" && it.status == "waiting_for_approval":
+		state = warn.Render("needs you")
+	case it.status == "stopped" || it.status == "failed":
+		state = dim.Render("exited")
+	case it.status == "waiting_for_approval":
+		state = warn.Render("needs you")
+	default:
+		state = dim.Render(it.status)
+	}
+	return role + " · " + state
 }
 
 func stripLead(s string) string { return strings.TrimLeft(s, " ") }
@@ -628,8 +662,10 @@ func statusIcon(st string) string {
 		return dim.Render("○")
 	case "waiting_for_approval", "cooling_down", "starting":
 		return warn.Render("◐")
-	case "failed", "quota_unavailable", "authentication_required", "unknown":
+	case "quota_unavailable", "authentication_required", "unknown":
 		return bad.Render("✕")
+	case "stopped", "failed":
+		return dim.Render("■")
 	}
 	return dim.Render("·")
 }
@@ -712,4 +748,11 @@ func openAssignment(as []coord.Assignment, worker string) bool {
 		}
 	}
 	return false
+}
+
+func lastN(xs []string, n int) []string {
+	if len(xs) > n {
+		return xs[len(xs)-n:]
+	}
+	return xs
 }

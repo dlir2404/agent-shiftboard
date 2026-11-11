@@ -68,3 +68,31 @@ func Tx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 
 // Now returns the current time as stored: RFC 3339 in UTC.
 func Now() string { return time.Now().UTC().Format(time.RFC3339) }
+
+// OpenReadOnly opens an existing database without writing to it, for
+// callers that cannot write there (for example inside an agent sandbox).
+func OpenReadOnly(path string) (*sql.DB, error) {
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", path))
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
+// OpenMemory opens an empty in-memory database with the schema.
+func OpenMemory() (*sql.DB, error) {
+	db, err := sql.Open("sqlite", "file::memory:")
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}

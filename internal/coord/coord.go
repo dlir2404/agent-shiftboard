@@ -77,8 +77,16 @@ func Open(root string) (*Coordinator, error) {
 	}
 	udb, err := store.Open(udbPath)
 	if err != nil {
-		db.Close()
-		return nil, err
+		// The user-scope database lives outside the project; an agent
+		// sandbox may forbid writing there. Fall back to reading it (or to
+		// an empty one) so project operations keep working; user-scope
+		// writes then fail with a clear error.
+		if udb, err = store.OpenReadOnly(udbPath); err != nil {
+			if udb, err = store.OpenMemory(); err != nil {
+				db.Close()
+				return nil, err
+			}
+		}
 	}
 	userDir, _ := paths.UserDir()
 	pol, err := policy.Load(userDir, paths.StateDir(root))

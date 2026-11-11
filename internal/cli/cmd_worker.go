@@ -74,7 +74,7 @@ assignment, the rules in force, and the brief, and reports back with
 				if err := os.MkdirAll(dir, 0o700); err != nil {
 					return err
 				}
-				if err := os.WriteFile(ctxFile, []byte(render.WorkerContext(v, asg, sid)), 0o600); err != nil {
+				if err := os.WriteFile(ctxFile, []byte(render.WorkerContext(v, asg, sid)+render.ProviderNote(provider)), 0o600); err != nil {
 					return err
 				}
 				spec := a.launchSpec(c, sid, native, provider)
