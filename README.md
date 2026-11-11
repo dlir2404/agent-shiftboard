@@ -9,6 +9,7 @@
 ![go 1.27+](https://img.shields.io/badge/go-1.27%2B-00ADD8)
 ![agents: Claude Code · Codex](https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex-blueviolet)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Support on Ko-fi](https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/dlir2404)
 
 [About](#about) · [Why](#why-agentshiftboard) · [Install](#platforms-and-installation) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Docs](docs/)
 
@@ -171,6 +172,14 @@ Issues and pull requests are welcome. Before changing architecture or persistenc
 ```sh
 go build ./... && go vet ./... && go test ./...
 ```
+
+## Support
+
+AgentShiftboard is free and open source. If it saves you time, you can support its development:
+
+[![Support me on Ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/dlir2404)
+
+Bug reports, ideas, and pull requests help just as much.
 
 ## Security
 
