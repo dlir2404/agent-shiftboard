@@ -147,6 +147,7 @@ func (w Workspace) Ensure() (bool, error) {
 		if ConfigPath != "" {
 			_, _ = w.R.Run("source-file", ConfigPath) // apply config changes from an upgrade
 		}
+		w.repairList()
 		_, _ = w.R.Run("resize-pane", "-t", w.Session+":main.0", "-x", fmt.Sprint(ListWidth))
 		return false, nil
 	}
@@ -161,6 +162,27 @@ func (w Workspace) Ensure() (bool, error) {
 	_, _ = w.R.Run("resize-pane", "-t", w.Session+":main.0", "-x", fmt.Sprint(ListWidth))
 	_, err := w.R.Run("select-pane", "-t", w.Session+":main.0")
 	return true, err
+}
+
+// repairList puts the session list back on the left of the main window
+// when its pane is gone (the board exited, for example after a crash), so
+// running agent-shiftboard again always restores the layout.
+func (w Workspace) repairList() {
+	out, err := w.R.Run("list-panes", "-t", w.Session+":main", "-F", "#{pane_start_command}")
+	board := shellQuote(w.Self) + " board"
+	if err != nil {
+		// The main window itself is gone: rebuild it.
+		if _, err := w.R.Run("new-window", "-d", "-t", w.Session+":", "-n", "main", "-c", w.Root,
+			"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, board); err == nil {
+			_, _ = w.R.Run("split-window", "-h", "-d", "-t", w.Session+":main", "-c", w.Root, placeholder)
+		}
+		return
+	}
+	if strings.Contains(out, " board") {
+		return
+	}
+	_, _ = w.R.Run("split-window", "-h", "-b", "-d", "-t", w.Session+":main.0", "-l", fmt.Sprint(ListWidth),
+		"-c", w.Root, "-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, board)
 }
 
 // OpenWindow starts command in a new hidden window and returns its pane

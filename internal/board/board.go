@@ -72,6 +72,16 @@ func Run(open Opener, _ int64) error {
 	}
 	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
 	if err != nil {
+		if Leave == nil {
+			return err
+		}
+		// In the workspace the list is the left pane: if it crashed, the
+		// pane would close and the layout would lose its list. Restart.
+		fmt.Fprintf(os.Stderr, "\nThe session list stopped (%v); restarting…\n", err)
+		time.Sleep(2 * time.Second)
+		if exe, xerr := os.Executable(); xerr == nil {
+			return syscall.Exec(exe, os.Args, os.Environ())
+		}
 		return err
 	}
 	if fm, ok := final.(model); ok && fm.restart {
@@ -1151,6 +1161,9 @@ func short(ts string) string {
 
 func trunc(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")
+	if n <= 0 {
+		return "" // a pane narrower than the layout (for example while tmux resizes)
+	}
 	if r := []rune(s); len(r) > n {
 		return string(r[:n-1]) + "…"
 	}

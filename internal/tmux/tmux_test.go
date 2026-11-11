@@ -9,6 +9,7 @@ import (
 type fake struct {
 	calls  [][]string
 	exists bool
+	noList bool // the main window lost its list pane
 }
 
 func (f *fake) Run(args ...string) (string, error) {
@@ -21,6 +22,11 @@ func (f *fake) Run(args ...string) (string, error) {
 		return "", errors.New("no session")
 	case "new-window":
 		return "%7", nil
+	case "list-panes":
+		if f.noList {
+			return "/bin/agent-shiftboard start --task 1", nil
+		}
+		return "'/bin/agent-shiftboard' board\n/bin/agent-shiftboard start --task 1", nil
 	}
 	return "", nil
 }
@@ -44,8 +50,20 @@ func TestEnsureBuildsLayoutWithoutSessionEnv(t *testing.T) {
 		t.Fatalf("session env must not be set globally:\n%s", joined)
 	}
 	f.calls, f.exists = nil, true
-	if created, err := w.Ensure(); err != nil || created || len(f.calls) != 2 || f.calls[1][0] != "resize-pane" {
+	if created, err := w.Ensure(); err != nil || created || len(f.calls) != 3 || f.calls[2][0] != "resize-pane" {
 		t.Fatalf("existing session should be reused: %v %v", err, f.calls)
+	}
+	// A main window that lost its list pane gets it back on the left.
+	f.calls, f.noList = nil, true
+	if _, err := w.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	joined = ""
+	for _, c := range f.calls {
+		joined += strings.Join(c, " ") + "\n"
+	}
+	if !strings.Contains(joined, "split-window -h -b -d -t asb-proj-abc123:main.0 -l 38") || !strings.Contains(joined, "AGENT_SHIFTBOARD_PROJECT=/p /bin/agent-shiftboard board") {
+		t.Fatalf("list pane not restored:\n%s", joined)
 	}
 }
 

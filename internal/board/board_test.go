@@ -297,3 +297,45 @@ func TestAttentionPrefersWaitingAgent(t *testing.T) {
 		t.Fatalf("waiting worker should come first, got %q", pane)
 	}
 }
+
+// The list is a tmux pane: while tmux resizes it (attaching from a smaller
+// terminal, for example) it can be narrower than the layout. Rendering must
+// never panic, or the pane closes and the workspace loses its list.
+func TestViewsNeverPanicInNarrowPanes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, coord.DraftTitle, "(not described yet: ask the user what they want)")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude", NativeSessionID: "n"})
+	c.Close()
+	for _, status := range []string{"", "running", "waiting for approval", "stopped"} {
+		if status != "" {
+			c, _ := open(ctx)
+			_ = c.Observe(ctx, coord.User, sid, status, "", "hook")
+			c.Close()
+		}
+		snap := loadSnapshot(open)
+		var row item
+		if len(snap.items) > 0 {
+			row = snap.items[0]
+		}
+		for w := 0; w <= 40; w++ {
+			for _, h := range []int{0, 1, 3, 8, 40} {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Errorf("status %q, %dx%d: %v", status, w, h, r)
+						}
+					}()
+					_ = model{open: open, width: w, height: h, snap: snap}.View()
+					_ = panel{width: w, height: h, row: row, kids: snap.items}.View()
+				}()
+			}
+		}
+	}
+}
