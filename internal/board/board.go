@@ -79,8 +79,10 @@ type item struct {
 	scope string
 	depth int
 	// task rows
-	task  coord.Task
-	brief coord.Brief
+	task   coord.Task
+	brief  coord.Brief
+	active bool // has running sessions, sessions waiting, or items that need the user
+	old    bool // not updated for a while and nothing active
 	// session rows
 	pane, provider, role, status, reason, observed string
 	assignment                                     *coord.Assignment
@@ -107,7 +109,10 @@ type model struct {
 	exe           string
 	exeMod        time.Time
 	restart       bool
-	selectedID    string // keeps the selection across refreshes
+	selectedID    string         // keeps the selection across refreshes
+	toggled       map[int64]bool // tasks the user expanded or collapsed with space
+	filter        string
+	showOlder     bool
 }
 
 type input struct {
@@ -161,7 +166,15 @@ func loadSnapshot(open Opener) snapshot {
 	}
 	sort.SliceStable(openTasks, func(i, j int) bool { return openTasks[i].UpdatedAt > openTasks[j].UpdatedAt })
 	seen := map[string]bool{}
+	type group struct {
+		rows  []item
+		score int
+		upd   string
+	}
+	var groups []group
 	for _, t := range openTasks {
+		start := len(s.items)
+		running0, waiting0 := s.running, s.waiting
 		b, _ := c.GetBrief(ctx, t.ID)
 		s.items = append(s.items, item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
 			keys: "→/enter open lead · s switch lead CLI · n new task"})
@@ -229,7 +242,36 @@ func loadSnapshot(open Opener) snapshot {
 			s.items = append(s.items, n)
 			s.waiting++
 		}
+		g := group{rows: append([]item(nil), s.items[start:]...), upd: t.UpdatedAt, score: 2}
+		s.items = s.items[:start]
+		shown := false
+		for _, r := range g.rows[1:] {
+			shown = shown || (r.pane != "" && r.pane == s.shown)
+		}
+		switch {
+		case s.waiting > waiting0:
+			g.score = 0
+		case s.running > running0:
+			g.score = 1
+		}
+		g.rows[0].active = g.score < 2 || shown
+		if !g.rows[0].active {
+			if up, err := time.Parse(time.RFC3339, t.UpdatedAt); err == nil && time.Since(up) > 72*time.Hour {
+				g.rows[0].old = true
+			}
+		}
+		groups = append(groups, g)
 	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].score != groups[j].score {
+			return groups[i].score < groups[j].score
+		}
+		return groups[i].upd > groups[j].upd
+	})
+	for _, g := range groups {
+		s.items = append(s.items, g.rows...)
+	}
+
 	return s
 }
 
@@ -316,7 +358,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapMsg:
 		m.snap = snapshot(msg)
 		m.cursor = 0
-		for i, it := range m.snap.items {
+		for i, it := range m.visible() {
 			if it.kind+it.id == m.selectedID {
 				m.cursor = i
 			}
@@ -341,8 +383,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.snap.items)-1 {
+			if m.cursor < len(m.visible())-1 {
 				m.cursor++
+			}
+		case "/":
+			m.input = &input{purpose: "filter", text: m.filter}
+			return m, nil
+		case "esc":
+			m.filter, m.cursor = "", 0
+		case " ":
+			if it, ok := m.selected(); ok {
+				switch it.kind {
+				case "older":
+					m.showOlder = !m.showOlder
+				case "task":
+					if m.toggled == nil {
+						m.toggled = map[int64]bool{}
+					}
+					m.toggled[it.task.ID] = !m.expanded(it)
+				}
 			}
 		case "n":
 			if NewTask == nil {
@@ -368,6 +427,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
+	if it.kind == "older" && (key == "enter" || key == "right") {
+		m.showOlder = !m.showOlder
+		return m, nil
+	}
 	if key == "right" || key == "l" {
 		if it.kind != "task" && it.kind != "session" {
 			return m, nil
@@ -423,6 +486,25 @@ func openLead(taskID int64, mode, provider string) tea.Cmd {
 }
 
 func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.input.purpose == "filter" {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.input, m.filter = nil, ""
+		case tea.KeyEnter:
+			m.input = nil
+		case tea.KeyBackspace:
+			if r := []rune(m.input.text); len(r) > 0 {
+				m.input.text = string(r[:len(r)-1])
+			}
+		default:
+			m.input.text += msg.String()
+		}
+		if m.input != nil {
+			m.filter = m.input.text
+		}
+		m.cursor = 0
+		return m, nil
+	}
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.input = nil
@@ -450,8 +532,9 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) selected() (item, bool) {
-	if m.cursor >= 0 && m.cursor < len(m.snap.items) {
-		return m.snap.items[m.cursor], true
+	rows := m.visible()
+	if m.cursor >= 0 && m.cursor < len(rows) {
+		return rows[m.cursor], true
 	}
 	return item{}, false
 }
@@ -524,8 +607,11 @@ func (m model) View() string {
 	if len(s.items) == 0 {
 		b.WriteString(dim.Render("No open tasks.\nPress n to start one.") + "\n")
 	}
+	if m.filter != "" {
+		b.WriteString(accent.Render("/"+m.filter) + dim.Render("  esc clears") + "\n")
+	}
 	var rows []string
-	for i, it := range s.items {
+	for i, it := range m.visible() {
 		line := rowText(it, w-3)
 		if it.pane != "" && it.pane == s.shown {
 			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
@@ -547,11 +633,14 @@ func (m model) View() string {
 	b.WriteString(strings.Join(rows, "\n") + "\n")
 	b.WriteString(dim.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString(detail)
-	foot := dim.Render("● running ○ idle ◐ needs you ■ exited\n↑↓ · →/enter open · n new task · s switch lead")
+	foot := dim.Render("● running ○ idle ◐ needs you ■ exited\n↑↓ · →/enter open · space fold · / find · n new task · s switch lead")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
 			prompt = "New lead CLI (" + strings.Join(Providers, ", ") + ")"
+		}
+		if m.input.purpose == "filter" {
+			prompt = "Find"
 		}
 		foot = accent.Render(prompt+": ") + m.input.text + "█"
 	} else if m.msg != "" {
@@ -614,6 +703,8 @@ func compactDetail(it item, w int) string {
 func rowText(it item, w int) string {
 	indent := strings.Repeat(" ", 1+it.depth*2)
 	switch it.kind {
+	case "older":
+		return " " + dim.Render(it.text)
 	case "task":
 		return " " + trunc(title.Render(it.id)+" "+it.text, w+20)
 	case "session":
@@ -791,4 +882,72 @@ func wakeLead(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coor
 		_ = Wake(lead.PaneID, msg)
 		return // one notice per refresh
 	}
+}
+
+// expanded reports whether a task row shows its sessions and items: the
+// user's space toggle wins; otherwise tasks with activity, and every task
+// while filtering, are expanded.
+func (m model) expanded(task item) bool {
+	if v, ok := m.toggled[task.task.ID]; ok {
+		return v
+	}
+	return task.active || m.filter != ""
+}
+
+// visible lists the rows to show: tasks ranked by attention, children of
+// expanded tasks, matching rows while filtering, and older tasks folded
+// into one row.
+func (m model) visible() []item {
+	var out []item
+	var older []item
+	f := strings.ToLower(m.filter)
+	items := m.snap.items
+	for i := 0; i < len(items); i++ {
+		if items[i].kind != "task" {
+			continue
+		}
+		task := items[i]
+		j := i + 1
+		for j < len(items) && items[j].kind != "task" {
+			j++
+		}
+		children := items[i+1 : j]
+		if f != "" {
+			match := strings.Contains(strings.ToLower(task.text+" "+task.id), f)
+			for _, c := range children {
+				match = match || strings.Contains(strings.ToLower(c.provider+" "+c.text), f)
+			}
+			if !match {
+				continue
+			}
+		}
+		group := []item{task}
+		if m.expanded(task) {
+			group = append(group, children...)
+		} else if len(children) > 0 {
+			group[0].text += dim.Render(fmt.Sprintf(" (+%d)", len(children)))
+		}
+		if task.old && f == "" {
+			older = append(older, group...)
+			continue
+		}
+		out = append(out, group...)
+	}
+	if len(older) > 0 {
+		n := 0
+		for _, o := range older {
+			if o.kind == "task" {
+				n++
+			}
+		}
+		label := fmt.Sprintf("▸ Older tasks (%d) · space to show", n)
+		if m.showOlder {
+			label = fmt.Sprintf("▾ Older tasks (%d) · space to hide", n)
+		}
+		out = append(out, item{kind: "older", id: "older", text: label})
+		if m.showOlder {
+			out = append(out, older...)
+		}
+	}
+	return out
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/paths"
@@ -99,5 +100,38 @@ func TestWakeLeadOncePerResult(t *testing.T) {
 	loadSnapshot(open)
 	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%5: AgentShiftboard: codex worker finished A-1") {
 		t.Fatalf("wakes: %v", sent)
+	}
+}
+
+func TestVisibleFoldsAndFilters(t *testing.T) {
+	now := time.Now().UTC()
+	old := now.Add(-100 * time.Hour).Format(time.RFC3339)
+	m := model{snap: snapshot{items: []item{
+		{kind: "task", id: "#4", text: "README via Codex", active: true, task: coord.Task{ID: 4}},
+		{kind: "session", id: "s1", provider: "claude", depth: 1},
+		{kind: "session", id: "s2", provider: "codex", depth: 1},
+		{kind: "task", id: "#2", text: "quiet task", task: coord.Task{ID: 2}},
+		{kind: "session", id: "s3", provider: "claude", depth: 1},
+		{kind: "task", id: "#1", text: "ancient task", old: true, task: coord.Task{ID: 1, UpdatedAt: old}},
+		{kind: "session", id: "s4", provider: "claude", depth: 1},
+	}}}
+	ids := func() string {
+		var out []string
+		for _, it := range m.visible() {
+			out = append(out, it.id)
+		}
+		return strings.Join(out, ",")
+	}
+	if got := ids(); got != "#4,s1,s2,#2,older" {
+		t.Fatalf("default: %s", got)
+	}
+	m.toggled = map[int64]bool{2: true}
+	m.showOlder = true
+	if got := ids(); got != "#4,s1,s2,#2,s3,older,#1" {
+		t.Fatalf("expanded: %s", got)
+	}
+	m.toggled, m.showOlder, m.filter = nil, false, "ancient"
+	if got := ids(); got != "#1,s4" {
+		t.Fatalf("filter: %s", got)
 	}
 }
