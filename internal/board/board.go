@@ -191,6 +191,22 @@ func loadSnapshot(open Opener) snapshot {
 	for _, t := range tasks {
 		if t.Status == "queued" || t.Status == "active" || t.Status == "blocked" {
 			openTasks = append(openTasks, t)
+			continue
+		}
+		// A completed task can still have a native CLI pane open. Keep it
+		// reachable until the session actually exits.
+		if t.Status == "done" {
+			ss, err := c.ListSessions(ctx, t.ID)
+			if err != nil {
+				s.err = err
+				return s
+			}
+			for _, x := range ss {
+				if x.PaneID != "" && x.Status != "stopped" && x.Status != "failed" {
+					openTasks = append(openTasks, t)
+					break
+				}
+			}
 		}
 	}
 	sort.SliceStable(openTasks, func(i, j int) bool { return openTasks[i].UpdatedAt > openTasks[j].UpdatedAt })
@@ -275,11 +291,23 @@ func loadSnapshot(open Opener) snapshot {
 		if t.PendingLead != "" {
 			lead = agents[t.PendingLead]
 		}
+		if lead == nil && t.Status == "done" {
+			for _, x := range ss {
+				if x.Role == "lead" {
+					if ag := agents[x.ID]; ag != nil && ag.pane != "" {
+						lead = ag
+					}
+				}
+			}
+		}
 		row := item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
 			agents: strings.Join(chips, " · "), agentList: agentRows, keys: "space actions · →/enter open the lead"}
+		if t.Status == "done" {
+			row.keys = "space actions · →/enter open the session"
+		}
 		if lead != nil {
 			row.provider, row.status, row.reason, row.pane, row.observed = lead.s.Provider, lead.status, lead.reason, lead.pane, lead.s.ObservedAt
-			if lead.pane == "" {
+			if lead.pane == "" && t.Status != "done" {
 				row.keys = "space actions · →/enter resume the lead"
 			}
 		}
@@ -607,6 +635,10 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 				}
 				return actionMsg{}
 			}
+		}
+		if it.task.Status == "done" {
+			m.msg = "this session is complete; its agent pane has closed"
+			return m, nil
 		}
 		return m, openLead(it.task.ID, "auto", "")
 	case key == "enter" && it.kind == "agent" && it.pane != "" && Focus != nil:

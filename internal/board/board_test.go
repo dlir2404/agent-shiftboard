@@ -59,6 +59,51 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	}
 }
 
+func TestCompletedTaskKeepsLiveLeadVisible(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, err := open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.CreateTask(ctx, coord.User, "orientation", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead := coord.Actor{SessionID: sid}
+	if err := c.AckHandoff(ctx, lead, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetSessionRuntime(ctx, sid, "%9", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseTask(ctx, lead, id); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := model{open: open, width: 38, height: 40}
+	m.snap = loadSnapshot(open)
+	if len(m.snap.items) == 0 || m.snap.items[0].task.ID != id || m.snap.items[0].pane != "%9" {
+		t.Fatalf("completed task with live lead disappeared: %+v", m.snap.items)
+	}
+	if !strings.Contains(m.snap.items[0].agents, "codex lead") {
+		t.Fatalf("missing agent details: %+v", m.snap.items[0])
+	}
+	if !strings.Contains(m.View(), "orientation") {
+		t.Fatal("completed task missing from board")
+	}
+}
+
 func TestNativePrompt(t *testing.T) {
 	if nativePrompt("Folder access\nTrust this folder? Codex can read...") == "" {
 		t.Fatal("codex trust prompt not detected")
