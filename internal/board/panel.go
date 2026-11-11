@@ -284,9 +284,9 @@ func (p panel) View() string {
 		line := padRight(" "+label, menuW)
 		if i == p.menu {
 			if p.inContent {
-				line = accent.Render(padRight("▸"+label, menuW))
+				line = accent.Render(line)
 			} else {
-				line = cursor.Render(padRight("▶"+label, menuW))
+				line = highlight(line, menuW)
 			}
 		}
 		if name == "Needs you" && p.count(name) > 0 && i != p.menu {
@@ -372,11 +372,9 @@ func (p panel) content(w int) []string {
 			}[panelMenu[p.menu]])}
 		}
 		for i, it := range rows {
-			line := p.rowLine(it, w-2)
+			line := " " + p.rowLine(it, w-2)
 			if p.inContent && i == p.cursor {
-				line = cursor.Render(padRight("▶"+line, w))
-			} else {
-				line = " " + line
+				line = highlight(line, w)
 			}
 			out = append(out, line)
 		}

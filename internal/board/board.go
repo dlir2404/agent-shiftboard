@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -774,7 +775,7 @@ var (
 	bad     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
 	good    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
 	accent  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	cursor  = lipgloss.NewStyle().Background(lipgloss.Color("24")).Foreground(lipgloss.Color("255")).Bold(true)
+	cursor  = lipgloss.NewStyle().Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255")).Bold(true)
 	keyHint = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 	header  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 )
@@ -827,7 +828,7 @@ func (m model) View() string {
 			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
 		}
 		if i == m.cursor {
-			line = cursor.Render(padRight("▶"+strings.TrimPrefix(line, " "), w))
+			line = highlight(line, w)
 		}
 		rows = append(rows, line)
 	}
@@ -1237,4 +1238,13 @@ func closeDoneWorkers(ctx context.Context, c *coord.Coordinator, ss []coord.Sess
 			_ = c.Observe(ctx, coord.User, a.WorkerSession, "stopped", "completed", "user")
 		}
 	}
+}
+
+var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// highlight marks the selected row with a full-width bar. The text keeps its
+// exact position (no marker is inserted), so moving the cursor never shifts
+// the layout; inner colors are dropped so the bar stays even.
+func highlight(line string, w int) string {
+	return cursor.Render(padRight(ansi.ReplaceAllString(line, ""), w))
 }

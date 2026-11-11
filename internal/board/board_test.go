@@ -47,7 +47,7 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 		t.Fatalf("list should show one session with 2 things that need the user: %+v", vis)
 	}
 	v := m.View()
-	for _, want := range []string{"AgentShiftboard", "#1", "implement cache", "▶", "◐2", "space actions"} {
+	for _, want := range []string{"AgentShiftboard", "#1", "implement cache", "◐2", "space actions"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -235,7 +235,7 @@ func TestPanelViews(t *testing.T) {
 	p := panel{width: 100, height: 30,
 		row: item{kind: "task", id: "#4", text: "README", agents: "claude lead ○", progress: "1/2",
 			agentList: []item{{kind: "agent", text: "claude lead", role: "lead", status: "idle"}},
-			brief: coord.Brief{Fields: coord.BriefFields{Goal: "write docs", NextAction: "ask the user"}}},
+			brief:     coord.Brief{Fields: coord.BriefFields{Goal: "write docs", NextAction: "ask the user"}}},
 		kids: []item{
 			{kind: "item", text: "write README", status: "done", role: "codex worker"},
 			{kind: "item", text: "commit", status: "in_progress", role: "claude lead"},
