@@ -122,3 +122,37 @@ func TestUnmanagedProcessIsIgnored(t *testing.T) {
 		t.Fatalf("unmanaged sessions must not be blocked: %s", r.Stdout)
 	}
 }
+
+func TestCodexHooks(t *testing.T) {
+	c, lead, _ := setup(t)
+	ctx := context.Background()
+	call := func(payload map[string]any) Result {
+		b, _ := json.Marshal(payload)
+		var errb bytes.Buffer
+		return Handle(ctx, c, "codex", lead, payload["hook_event_name"].(string), bytes.NewReader(b), &errb, time.Now())
+	}
+	// Codex shell tool with an argv command is still an external action.
+	r := call(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "shell", "tool_input": map[string]any{"command": []string{"bash", "-lc", "git push origin main"}}})
+	if !strings.Contains(string(r.Stdout), `"permissionDecision":"deny"`) {
+		t.Fatalf("expected deny, got %s", r.Stdout)
+	}
+	// The launch context is injected once: at startup, not again on the
+	// first prompt.
+	f := t.TempDir() + "/launch.md"
+	if err := os.WriteFile(f, []byte("LAUNCH CONTEXT"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_SHIFTBOARD_LAUNCH_CONTEXT", f)
+	r = call(map[string]any{"hook_event_name": "SessionStart", "source": "startup", "session_id": "019a-thread"})
+	if !strings.Contains(string(r.Stdout), "LAUNCH CONTEXT") {
+		t.Fatalf("no launch context at startup: %s", r.Stdout)
+	}
+	r = call(map[string]any{"hook_event_name": "UserPromptSubmit", "session_id": "019a-thread"})
+	if strings.Contains(string(r.Stdout), "LAUNCH CONTEXT") {
+		t.Fatalf("launch context delivered twice: %s", r.Stdout)
+	}
+	ss, _ := c.ListSessions(ctx, 1)
+	if ss[0].NativeSessionID != "019a-thread" {
+		t.Fatalf("native ID not captured: %q", ss[0].NativeSessionID)
+	}
+}

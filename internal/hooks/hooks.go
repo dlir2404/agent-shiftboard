@@ -199,7 +199,7 @@ func segments(cmd string) []string {
 
 // MatchExternal reports which external-action pattern a tool call matches.
 func MatchExternal(c *coord.Coordinator, toolName, command string) string {
-	if toolName == "Bash" {
+	if command != "" {
 		for _, seg := range segments(command) {
 			if strings.HasPrefix(seg, "agent-shiftboard") {
 				continue

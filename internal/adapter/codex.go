@@ -159,3 +159,7 @@ func CodexObservation(h HookInput, _ time.Time) Observation {
 	}
 	return Observation{}
 }
+
+// CodexAllowedTools lists the AgentShiftboard MCP tools Codex may call
+// without a prompt (read and agent operations only).
+func CodexAllowedTools() []string { return append([]string(nil), codexAgentShiftboardTools...) }

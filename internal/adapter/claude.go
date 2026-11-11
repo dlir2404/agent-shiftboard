@@ -163,12 +163,32 @@ type HookInput struct {
 }
 
 // Command returns the Bash command of a PreToolUse payload, if any.
+// Command returns the shell command of a tool call, whether the CLI sends
+// it as a string (Claude Code's Bash) or as an argv array; for a
+// `bash -lc "<script>"` argv it returns the script.
 func (h HookInput) Command() string {
 	var in struct {
-		Command string `json:"command"`
+		Command json.RawMessage `json:"command"`
+		Cmd     json.RawMessage `json:"cmd"`
 	}
 	_ = json.Unmarshal(h.ToolInput, &in)
-	return strings.TrimSpace(in.Command)
+	raw := in.Command
+	if len(raw) == 0 {
+		raw = in.Cmd
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return strings.TrimSpace(s)
+	}
+	var argv []string
+	if json.Unmarshal(raw, &argv) != nil || len(argv) == 0 {
+		return ""
+	}
+	if len(argv) >= 3 && (strings.HasSuffix(argv[0], "sh") || strings.HasSuffix(argv[0], "bash") || strings.HasSuffix(argv[0], "zsh")) &&
+		strings.HasPrefix(argv[1], "-") && strings.Contains(argv[1], "c") {
+		return strings.TrimSpace(argv[2])
+	}
+	return strings.TrimSpace(strings.Join(argv, " "))
 }
 
 // Observation is what a hook event means for session status.
