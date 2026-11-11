@@ -170,3 +170,42 @@ func TestSessionRowsShowWorkItems(t *testing.T) {
 		t.Fatalf("session row: %+v", m.snap.items[0])
 	}
 }
+
+func TestCloseFinishedIdleWorkers(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	lead := coord.Actor{SessionID: sid}
+	_ = c.AckHandoff(ctx, lead, nil)
+	aid, _ := c.CreateAssignment(ctx, lead, coord.AssignmentInput{TaskID: id, Scope: "poem"})
+	wid, _ := c.RegisterWorker(ctx, lead, aid, coord.SessionSpec{Provider: "codex"})
+	w := coord.Actor{SessionID: wid}
+	_ = c.SetSessionRuntime(ctx, wid, "%9", 0, "")
+	_ = c.Observe(ctx, w, wid, "running", "", "hook")
+	_ = c.SubmitAssignment(ctx, w, aid, "done", "")
+	_ = c.Observe(ctx, w, wid, "idle", "", "hook")
+	c.Close()
+
+	var closed []string
+	ClosePane = func(p string) error { closed = append(closed, p); return nil }
+	defer func() { ClosePane = nil }()
+	loadSnapshot(open) // submitted, not yet reviewed: keep
+	if len(closed) != 0 {
+		t.Fatalf("closed too early: %v", closed)
+	}
+	c, _ = open(ctx)
+	_ = c.ReviewAssignment(ctx, lead, aid, true, "")
+	c.Close()
+	loadSnapshot(open)
+	loadSnapshot(open)
+	if strings.Join(closed, ",") != "%9" {
+		t.Fatalf("closed: %v", closed)
+	}
+}

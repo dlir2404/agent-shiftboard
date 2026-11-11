@@ -153,7 +153,6 @@ func (w Workspace) Ensure() (bool, error) {
 		return false, err
 	}
 	_, _ = w.R.Run("set-environment", "-t", w.Session, "-u", "AGENT_SHIFTBOARD_SESSION_ID")
-	placeholder := "printf '\\n  Pick a session on the left (↑↓, then → or Enter).\\n  Press n there for a new task.\\n'; exec tail -f /dev/null"
 	if _, err := w.R.Run("split-window", "-h", "-d", "-t", w.Session+":main", "-c", w.Root, placeholder); err != nil {
 		return true, err
 	}
@@ -201,6 +200,20 @@ func (w Workspace) Show(pane string) error {
 		return err
 	}
 	_, err := w.R.Run("select-pane", "-t", w.Session+":main.1")
+	return err
+}
+
+// placeholder is what the right pane shows when no session is selected.
+const placeholder = "printf '\\n  Pick a session on the left (↑↓, then → or Enter).\\n  Press n there for a new session.\\n'; exec tail -f /dev/null"
+
+// Close ends the process in pane. If pane is shown on the right, the right
+// pane returns to the placeholder so the layout stays intact.
+func (w Workspace) Close(pane string) error {
+	if cur, err := w.Shown(); err == nil && cur == pane {
+		_, err := w.R.Run("respawn-pane", "-k", "-t", pane, "-c", w.Root, placeholder)
+		return err
+	}
+	_, err := w.R.Run("kill-pane", "-t", pane)
 	return err
 }
 

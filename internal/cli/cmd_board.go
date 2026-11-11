@@ -33,6 +33,7 @@ func (a *app) boardCmd() *cobra.Command {
 				}
 				board.Focus = ws.Show
 				board.Shown = func() string { p, _ := ws.Shown(); return p }
+				board.ClosePane = ws.Close
 				board.Wake = func(pane, text string) error {
 					if _, err := ws.R.Run("send-keys", "-t", pane, "-l", text); err != nil {
 						return err

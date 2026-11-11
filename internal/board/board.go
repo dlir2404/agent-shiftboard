@@ -45,6 +45,8 @@ var (
 	Shown func() string
 	// Wake types one line into a session's pane and submits it.
 	Wake func(pane, text string) error
+	// ClosePane ends the CLI in a pane (finished workers).
+	ClosePane func(pane string) error
 )
 
 // Run starts the board. It refuses to run inside a managed agent session,
@@ -286,6 +288,11 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		s.items = append(s.items, doneRows...)
 
+		live := map[string]liveAgent{}
+		for id, ag := range agents {
+			live[id] = liveAgent{pane: ag.pane, status: ag.status}
+		}
+		closeDoneWorkers(ctx, c, ss, as, live)
 		// Agents waiting on the user, and live workers not shown through an
 		// item, get their own rows so they can always be opened.
 		linked := map[string]bool{}
@@ -1146,4 +1153,26 @@ func itemIcon(st string) string {
 		return bad.Render("!")
 	}
 	return dim.Render("○")
+}
+
+type liveAgent struct{ pane, status string }
+
+// closeDoneWorkers ends idle workers whose assignment the lead has
+// accepted, rejected, or cancelled. Their conversation stays resumable.
+func closeDoneWorkers(ctx context.Context, c *coord.Coordinator, ss []coord.Session, as []coord.Assignment, live map[string]liveAgent) {
+	if ClosePane == nil || !c.Policy.CloseDoneWorkers() {
+		return
+	}
+	for _, a := range as {
+		if a.WorkerSession == "" || (a.Status != "accepted" && a.Status != "rejected" && a.Status != "cancelled") {
+			continue
+		}
+		ag, ok := live[a.WorkerSession]
+		if !ok || ag.pane == "" || ag.status != "idle" {
+			continue
+		}
+		if err := ClosePane(ag.pane); err == nil {
+			_ = c.Observe(ctx, coord.User, a.WorkerSession, "stopped", "completed", "user")
+		}
+	}
 }

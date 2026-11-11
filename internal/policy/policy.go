@@ -33,6 +33,9 @@ type Policy struct {
 	// WakeLeadOnResults types a one-line notice into an idle lead's
 	// session when a worker submits a result. Default true.
 	WakeLeadOnResults *bool `toml:"wake_lead_on_results"`
+	// CloseWorkersWhenDone closes an idle worker's CLI once the lead has
+	// accepted, rejected, or cancelled its assignment. Default true.
+	CloseWorkersWhenDone *bool `toml:"close_workers_when_done"`
 	// Per-provider settings, e.g. [providers.claude] permission_mode = "manual".
 	Providers map[string]Provider `toml:"providers"`
 	// External-action patterns (regular expressions) matched against shell
@@ -138,6 +141,8 @@ const SampleProjectConfig = `# AgentShiftboard project policy. Only you edit thi
 # lead_priority = ["claude", "codex"]
 # Tell an idle lead when a worker submits a result (types one line into it).
 # wake_lead_on_results = true
+# Close an idle worker once the lead has accepted, rejected, or cancelled its work.
+# close_workers_when_done = true
 
 # [providers.claude]
 # permission_mode = "manual"
@@ -151,3 +156,8 @@ const SampleProjectConfig = `# AgentShiftboard project policy. Only you edit thi
 
 // WakeLead reports whether idle leads are told about worker results.
 func (p Policy) WakeLead() bool { return p.WakeLeadOnResults == nil || *p.WakeLeadOnResults }
+
+// CloseDoneWorkers reports whether finished idle workers are closed.
+func (p Policy) CloseDoneWorkers() bool {
+	return p.CloseWorkersWhenDone == nil || *p.CloseWorkersWhenDone
+}
