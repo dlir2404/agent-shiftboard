@@ -264,3 +264,36 @@ func TestPanelViews(t *testing.T) {
 		t.Fatalf("needs you:\n%s", p.View())
 	}
 }
+
+func TestAttentionPrefersWaitingAgent(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	lead := coord.Actor{SessionID: sid}
+	_ = c.AckHandoff(ctx, lead, nil)
+	_, _ = c.AddPending(ctx, lead, id, "approval", "git push", "origin main", 0)
+	aid, _ := c.CreateAssignment(ctx, lead, coord.AssignmentInput{TaskID: id, Scope: "x"})
+	wid, _ := c.RegisterWorker(ctx, lead, aid, coord.SessionSpec{Provider: "codex"})
+	c.Close()
+	Passive = true
+	defer func() { Passive = false }()
+
+	pane, task, ok := Attention(open)
+	if !ok || pane != "" || task != id {
+		t.Fatalf("pending approval: %q %d %v", pane, task, ok)
+	}
+	c, _ = open(ctx)
+	_ = c.SetSessionRuntime(ctx, wid, "%7", 0, "")
+	_ = c.Observe(ctx, coord.Actor{SessionID: wid}, wid, "waiting_for_approval", "", "hook")
+	c.Close()
+	if pane, _, _ := Attention(open); pane != "%7" {
+		t.Fatalf("waiting worker should come first, got %q", pane)
+	}
+}

@@ -38,17 +38,47 @@ func (a *app) boardCmd() *cobra.Command {
 }
 
 func (a *app) panelCmd() *cobra.Command {
+	var view string
 	cmd := &cobra.Command{
 		Use: "panel", Short: "Actions panel for one session (opened from the list)", Hidden: true, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if _, err := a.wireWorkspace(cmd.Context()); err != nil {
 				return err
 			}
-			return board.RunPanel(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) }, a.task)
+			return board.RunPanel(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) }, a.task, view)
 		},
 	}
 	a.taskFlag(cmd)
+	cmd.Flags().StringVar(&view, "view", "", "view to open (Overview, Checklist, Agents, Needs you)")
 	return cmd
+}
+
+// attentionCmd jumps to what needs the user (bound to Shift+Down).
+func (a *app) attentionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use: "attention", Short: "Jump to what needs you", Hidden: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !coord.ActorFromEnv().IsUser() {
+				return coord.ErrUserOnly
+			}
+			root, err := a.wireWorkspace(cmd.Context())
+			if err != nil {
+				return err
+			}
+			board.Passive = true
+			pane, taskID, ok := board.Attention(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) })
+			ws := tmux.New(tmux.Exec{}, root)
+			switch {
+			case !ok:
+				_, err = ws.R.Run("display-message", "Nothing needs you right now")
+			case pane != "":
+				err = ws.Show(pane)
+			case board.OpenPanel != nil:
+				err = board.OpenPanel(taskID, "Needs you")
+			}
+			return err
+		},
+	}
 }
 
 // wireWorkspace connects the board package to the tmux workspace when
@@ -61,7 +91,7 @@ func (a *app) wireWorkspace(ctx context.Context) (string, error) {
 	root := c.Root
 	c.Close()
 	board.Providers = adapter.Names()
-	if !tmux.Available() || os.Getenv("TMUX") == "" {
+	if !tmux.Available() || (os.Getenv("TMUX") == "" && os.Getenv("AGENT_SHIFTBOARD_IN_WORKSPACE") == "") {
 		return root, nil
 	}
 	ws := tmux.New(tmux.Exec{}, root)
@@ -100,13 +130,14 @@ func (a *app) wireWorkspace(ctx context.Context) (string, error) {
 		_, err = a.openLead(context.Background(), c, ws, id, "new", "", true)
 		return err
 	}
-	board.OpenPanel = func(taskID int64) error {
+	board.SetNeed = func(n int) { _, _ = ws.R.Run("set-option", "-g", "@asb_need", fmt.Sprint(n)) }
+	board.OpenPanel = func(taskID int64, view string) error {
 		// A floating modal over the workspace (tmux popup), like an editor's
 		// settings window.
 		_, err := ws.R.Run("display-popup", "-E", "-w", "84%", "-h", "80%", "-d", root,
 			"-e", "AGENT_SHIFTBOARD_PROJECT="+root,
 			"-T", fmt.Sprintf(" session #%d ", taskID),
-			fmt.Sprintf("%s panel --task %d", tmuxQuote(ws.Self), taskID))
+			fmt.Sprintf("%s panel --task %d --view %s", tmuxQuote(ws.Self), taskID, tmuxQuote(view)))
 		return err
 	}
 	return root, nil

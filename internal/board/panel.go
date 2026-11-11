@@ -37,13 +37,20 @@ type panelMsg struct {
 	missing bool
 }
 
-// RunPanel shows the actions panel for one session.
-func RunPanel(open Opener, taskID int64) error {
+// RunPanel shows the actions panel for one session, optionally opened on
+// a view ("Needs you", "Checklist", ...).
+func RunPanel(open Opener, taskID int64, view string) error {
 	if !coord.ActorFromEnv().IsUser() {
 		return coord.ErrUserOnly
 	}
 	Passive = true
-	_, err := tea.NewProgram(panel{open: open, taskID: taskID}, tea.WithAltScreen()).Run()
+	p := panel{open: open, taskID: taskID}
+	for i, n := range panelMenu {
+		if strings.EqualFold(n, view) {
+			p.menu, p.inContent = i, true
+		}
+	}
+	_, err := tea.NewProgram(p, tea.WithAltScreen()).Run()
 	return err
 }
 

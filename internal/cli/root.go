@@ -60,7 +60,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.pendingCmd(), a.delegationCmd(), a.effectCmd(), a.milestoneCmd(),
 		a.delegateCmd(), a.assignmentCmd(), a.handoffCmd(), a.sessionCmd(),
 		a.configCmd(), a.secretCmd(), a.toolCmd(), a.getCmd(), a.applyCmd(), a.lockCmd(),
-		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(), a.workerCmd(), a.itemCmd(), a.panelCmd(),
+		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(), a.workerCmd(), a.itemCmd(), a.panelCmd(), a.attentionCmd(),
 	)
 	root.AddCommand(a.startCmd())
 	root.Use = "agent-shiftboard"
@@ -94,7 +94,8 @@ func (a *app) open(ctx context.Context) (*coord.Coordinator, error) {
 		return nil, err
 	}
 	if ud, err := paths.UserDir(); err == nil {
-		_ = tmux.WriteConfig(filepath.Join(ud, "tmux.conf"))
+		self, _ := os.Executable()
+		_ = tmux.WriteConfig(filepath.Join(ud, "tmux.conf"), self)
 	}
 	c.OnTaskChange = func(id int64) {
 		if err := render.WriteBrief(context.Background(), c, id); err != nil {

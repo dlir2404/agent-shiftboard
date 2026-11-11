@@ -51,8 +51,8 @@ set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
 set -g status-left " AgentShiftboard · #W "
 set -g status-left-length 60
-set -g status-right " Shift+← list · Shift+→ session · Ctrl+Q leave (sessions keep running) "
-set -g status-right-length 90
+set -g status-right "#{?#{&&:#{@asb_need},#{!=:#{@asb_need},0}},#[fg=colour220#,bold]◐ #{@asb_need} need you · ⇧↓ open #[default]· ,}⇧← list · ⇧→ session · Ctrl+Q leave "
+set -g status-right-length 110
 set -g window-status-format ""
 set -g window-status-current-format ""
 set -g pane-active-border-style "fg=colour39"
@@ -60,18 +60,20 @@ set -g pane-active-border-style "fg=colour39"
 bind -n S-Left select-window -t :main \; select-pane -t :main.0
 bind -n S-Right select-window -t :main \; select-pane -t :main.1
 bind -n C-q detach-client
+# Shift+Down: jump to what needs you (an agent's prompt, or the Needs you panel).
+bind -n S-Down run-shell -b -c "#{session_path}" "AGENT_SHIFTBOARD_IN_WORKSPACE=1 AGENT_SHIFTBOARD_SELF attention"
 # Keep the session list at a fixed width whatever the terminal size.
 set-hook -g client-attached "resize-pane -t :main.0 -x 38"
 set-hook -g client-resized "resize-pane -t :main.0 -x 38"
 `
 
 // WriteConfig writes Config to path and makes the server use it.
-func WriteConfig(path string) error {
+func WriteConfig(path, self string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	ConfigPath = path
-	return os.WriteFile(path, []byte(Config), 0o600)
+	return os.WriteFile(path, []byte(strings.ReplaceAll(Config, "AGENT_SHIFTBOARD_SELF", shellQuote(self))), 0o600)
 }
 
 // Exec runs the real tmux binary against AgentShiftboard's server.

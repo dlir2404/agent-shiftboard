@@ -47,7 +47,9 @@ var (
 	// workers) when loading; the action panel sets it.
 	Passive bool
 	// OpenPanel opens the actions panel of a session.
-	OpenPanel func(taskID int64) error
+	OpenPanel func(taskID int64, view string) error
+	// SetNeed publishes how many things need the user (status line).
+	SetNeed func(n int)
 	// Shown returns the pane on the right of the workspace.
 	Shown func() string
 	// Wake types one line into a session's pane and submits it.
@@ -409,6 +411,9 @@ func loadSnapshot(open Opener) snapshot {
 	for _, g := range groups {
 		s.items = append(s.items, g.rows...)
 	}
+	if SetNeed != nil && !Passive {
+		SetNeed(s.waiting)
+	}
 
 	return s
 }
@@ -541,7 +546,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					id := it.task.ID
 					return m, func() tea.Msg {
-						if err := OpenPanel(id); err != nil {
+						if err := OpenPanel(id, ""); err != nil {
 							return actionMsg{msg: "error: " + err.Error()}
 						}
 						return actionMsg{}
@@ -1328,4 +1333,25 @@ var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 // the layout; inner colors are dropped so the bar stays even.
 func highlight(line string, w int) string {
 	return cursor.Render(padRight(ansi.ReplaceAllString(line, ""), w))
+}
+
+// Attention finds the most urgent thing that needs the user: an agent
+// waiting at a prompt (returns its pane), or a session with records that
+// need the user (returns its task ID).
+func Attention(open Opener) (pane string, taskID int64, ok bool) {
+	s := loadSnapshot(open)
+	for _, it := range s.items {
+		if it.kind == "task" && it.status == "waiting_for_approval" && it.pane != "" {
+			return it.pane, it.task.ID, true
+		}
+		if it.kind == "agent" && it.status == "waiting_for_approval" && it.pane != "" {
+			return it.pane, it.task.ID, true
+		}
+	}
+	for _, it := range s.items {
+		if it.kind == "task" && it.needCount > 0 {
+			return "", it.task.ID, true
+		}
+	}
+	return "", 0, false
 }
