@@ -101,7 +101,7 @@ func (a *app) with(cmd *cobra.Command, fn func(ctx context.Context, c *coord.Coo
 		return err
 	}
 	defer c.Close()
-	return fn(ctx, c, coord.ActorFromEnv())
+	return fn(ctx, c, c.ResolveActor(ctx))
 }
 
 // taskFor resolves --task or the actor's own task.

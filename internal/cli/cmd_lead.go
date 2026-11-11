@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -160,7 +161,8 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 		return err
 	}
 	_ = ws.KeepOnExit(pane)
-	if err := c.SetSessionRuntime(ctx, sid, pane, 0, native); err != nil {
+	pid, _ := strconv.Atoi(mustOut(ws.R.Run("display-message", "-p", "-t", pane, "#{pane_pid}")))
+	if err := c.SetSessionRuntime(ctx, sid, pane, pid, native); err != nil {
 		return err
 	}
 	fmt.Fprintf(a.errOut, "Started %s lead session %s for task #%d in a hidden window (pane %s).\n", provider, sid, id, pane)
@@ -281,4 +283,11 @@ func attach(ws tmux.Workspace) error {
 		return errors.New("refusing to attach from inside a managed agent session")
 	}
 	return syscall.Exec(bin, args, os.Environ())
+}
+
+func mustOut(s string, err error) string {
+	if err != nil {
+		return ""
+	}
+	return s
 }

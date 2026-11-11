@@ -223,24 +223,30 @@ func WriteBrief(ctx context.Context, c *coord.Coordinator, taskID int64) error {
 	return os.Rename(tmp, p)
 }
 
-// LaunchContext is the text a new session receives at launch: how to work
-// with AgentShiftboard, the brief, and the readback it must give.
+// LaunchContext is the text a new session receives at launch (as an
+// appended system prompt): how to work with AgentShiftboard, the brief, and
+// the readback it must give.
 func LaunchContext(v View, sessionID string, readback []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are a session managed by AgentShiftboard (session %s, task #%d).\n\n", sessionID, v.Task.ID)
-	b.WriteString(`Rules for working here:
-- Task state lives in AgentShiftboard. Update it only with the agent-shiftboard commands or MCP tools (brief update, rule add, pending add, effect plan/start/finish, ...). The Markdown brief file is read-only.
-- Before any external or non-idempotent action (push, deploy, DB write, sending a message, publishing), run effect plan and effect start; afterwards effect finish with evidence.
-- When the user states a durable rule, record it with rule add. Never treat a pending approval as granted until the user explicitly approves that exact action and target.
-- Check the shared tools below before writing a helper script; register reusable helpers with tool register.
-- Never write secret values into task state; use secret references.
+	fmt.Fprintf(&b, "You are the lead of task #%d, managed by AgentShiftboard (session %s). The user talks to you directly in this terminal.\n\n", v.Task.ID, sessionID)
+	ack := "agent-shiftboard handoff ack"
+	if len(readback) > 0 {
+		ack += " " + strings.Join(readback, " ")
+	}
+	fmt.Fprintf(&b, "First, before your first reply, acknowledge the handoff by running:\n  %s\nDo this silently; do not ask the user about it.\n\n", ack)
+	if v.Task.Title == coord.DraftTitle {
+		fmt.Fprintf(&b, "The user has not described this task yet. Once they say what they want, run\n  agent-shiftboard task describe %d --title \"<short title>\" --goal \"<the outcome they asked for>\"\nIf they bring up separate work, you may record it as another task with `agent-shiftboard task new \"<title>\"`.\n\n", v.Task.ID)
+	}
+	b.WriteString(`Working rules:
+- Task state lives in AgentShiftboard. Change it only with agent-shiftboard commands or its MCP tools. The Markdown brief file is read-only.
+- Keep the brief current (brief update --base <revision>): decisions, completed work, next_action, blockers.
+- Before an external or non-idempotent action (git push, deploy, DB write, sending a message, publishing): effect plan, then effect start right before it, then effect finish with evidence.
+- When the user states a durable rule ("always ask before pushing"), record it with rule add --scope user|project|task --source "user in chat".
+- When a rule or common sense requires the user's approval: open it with pending add --kind approval --target <target> <action>, ask the user in chat, and when they clearly approve, record it with pending record-approval <P-id> --quote "<their words>". Never treat silence or a similar earlier approval as approval.
+- Never ask the user to run agent-shiftboard commands through your shell (for example with "!"): those run as you. The user approves on the AgentShiftboard board (right pane) or simply in chat.
+- Check the shared tools below before writing a helper script; register reusable helpers with tool register. Never write secret values into task state; use secret references.
 
 `)
-	if len(readback) > 0 {
-		fmt.Fprintf(&b, "Before anything else, acknowledge the handoff by reading back these IDs:\n  agent-shiftboard handoff ack %s\n\n", strings.Join(readback, " "))
-	} else {
-		b.WriteString("Before anything else, acknowledge the handoff:\n  agent-shiftboard handoff ack\n\n")
-	}
 	b.WriteString(Markdown(v, 0))
 	return b.String()
 }

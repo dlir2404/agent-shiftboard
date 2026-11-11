@@ -174,10 +174,10 @@ func (r registrar) register() {
 	}) (any, error) {
 		return ok(in.ID.ID + " answered"), c.RecordAnswer(ctx, a, strings.ToUpper(in.ID.ID), in.Answer)
 	})
-	add(r, "pending_record_approval", "Record an approval the user explicitly gave in the conversation. Repeat the exact action and target and quote the user's words.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+	add(r, "pending_record_approval", "Record an approval the user explicitly gave in the conversation: the P-id and a short quote of the user's words.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		ID
-		Action string `json:"action"`
-		Target string `json:"target"`
+		Action string `json:"action,omitempty" jsonschema:"optional; must match the recorded action"`
+		Target string `json:"target,omitempty" jsonschema:"optional; must match the recorded target"`
 		Quote  string `json:"quote"`
 	}) (any, error) {
 		return ok(in.ID.ID + " approved via conversation"), c.RecordApproval(ctx, a, strings.ToUpper(in.ID.ID), in.Action, in.Target, in.Quote)
@@ -281,6 +281,23 @@ func (r registrar) register() {
 			err = fmt.Errorf("op must be block, unblock, or close")
 		}
 		return ok("task updated"), err
+	})
+	add(r, "task_create", "Create another task the user brought up; it has no lead until one is started.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		Title string `json:"title"`
+		Goal  string `json:"goal,omitempty"`
+	}) (any, error) {
+		return c.CreateTask(ctx, a, in.Title, in.Goal)
+	})
+	add(r, "task_describe", "Set your task's title and goal once the user has said what they want (lead).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		Task
+		Title string `json:"title"`
+		Goal  string `json:"goal,omitempty"`
+	}) (any, error) {
+		id, err := task(ctx, c, a, in.Task.Task)
+		if err != nil {
+			return nil, err
+		}
+		return ok("described"), c.DescribeTask(ctx, a, id, in.Title, in.Goal)
 	})
 	add(r, "config_set", "Set a shared non-secret config value (project scope).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		Name        string `json:"name"`

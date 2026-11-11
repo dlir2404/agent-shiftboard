@@ -16,10 +16,10 @@ Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MC
 brew install tmux
 go build -o ~/.local/bin/agent-shiftboard ./cmd/agent-shiftboard   # any directory on PATH
 cd your-project
-agent-shiftboard                        # or: agent-shiftboard "add an LRU cache to the API"
+agent-shiftboard
 ```
 
-The first run initializes `.agent-shiftboard/` (add it to `.gitignore`), opens a tmux workspace with the lead on the left and the status board on the right, asks for a task, and starts Claude Code as the lead in that pane. When the CLI exits, the pane offers resume, a new session, or another task. Without tmux, the lead runs in the current terminal and `agent-shiftboard board` shows the board in another terminal.
+The first run initializes `.agent-shiftboard/` (add it to `.gitignore`) and opens a tmux workspace: Claude Code as the lead on the left, the status board on the right. Just talk to the lead; it names the task and records rules, approvals, and side effects as you work. Running `agent-shiftboard` again continues where you left off. When the CLI exits, the pane offers resume, a new task, or switching tasks. Without tmux, the lead runs in the current terminal and `agent-shiftboard board` shows the board in another terminal.
 
 ## Product invariants
 

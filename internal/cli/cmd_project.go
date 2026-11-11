@@ -185,6 +185,37 @@ func (a *app) taskCmd() *cobra.Command {
 			})
 		},
 	})
+	newTask := &cobra.Command{
+		Use: "new <title...>", Short: "Create another task (user or lead); it has no lead until one is started", Args: cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
+				id, err := c.CreateTask(ctx, actor, strings.Join(args, " "), "")
+				if err != nil {
+					return err
+				}
+				return a.done(fmt.Sprintf("Created task #%d.", id), map[string]int64{"task": id})
+			})
+		},
+	}
+	var dTitle, dGoal string
+	describe := &cobra.Command{
+		Use: "describe <task>", Short: "Set a task's title and goal once the user has described it (lead)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			id, err := parseTaskArg(args[0])
+			if err != nil {
+				return err
+			}
+			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
+				if err := c.DescribeTask(ctx, actor, id, dTitle, dGoal); err != nil {
+					return err
+				}
+				return a.done(fmt.Sprintf("Task #%d described.", id), nil)
+			})
+		},
+	}
+	describe.Flags().StringVar(&dTitle, "title", "", "short title (required)")
+	describe.Flags().StringVar(&dGoal, "goal", "", "the outcome the user asked for")
+	cmd.AddCommand(newTask, describe)
 	simple := func(use, short string, fn func(ctx context.Context, c *coord.Coordinator, actor coord.Actor, id int64, args []string) error) *cobra.Command {
 		return &cobra.Command{Use: use, Short: short, Args: cobra.MinimumNArgs(1),
 			RunE: func(cmd *cobra.Command, args []string) error {

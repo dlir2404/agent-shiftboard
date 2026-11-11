@@ -170,8 +170,9 @@ func (c *Coordinator) RecordAnswer(ctx context.Context, a Actor, id, answer stri
 }
 
 // RecordApproval records an approval the user gave in the conversation
-// (agent operation). It must repeat the exact action and target and quote
-// the user. Refused when policy is board_only.
+// (agent operation by the lead). It names the pending approval and quotes
+// the user's words; action and target are optional, but when given they
+// must match the recorded ones. Refused when policy is board_only.
 func (c *Coordinator) RecordApproval(ctx context.Context, a Actor, id, action, target, quote string) error {
 	if c.Policy.ConversationApprovals == "board_only" {
 		return errors.New("this project requires approvals on the board (conversation_approvals = \"board_only\"); ask the user to approve there")
@@ -189,8 +190,8 @@ func (c *Coordinator) RecordApproval(ctx context.Context, a Actor, id, action, t
 		if p.Kind != "approval" {
 			return errors.New("this is a question; use record-answer")
 		}
-		if strings.TrimSpace(action) != p.Action || strings.TrimSpace(target) != p.Target {
-			return fmt.Errorf("action/target do not match %s exactly (recorded: %q on %q)", id, p.Action, p.Target)
+		if (action != "" && norm(action) != norm(p.Action)) || (target != "" && norm(target) != norm(p.Target)) {
+			return fmt.Errorf("action/target differ from %s (recorded: %q on %q); omit them or repeat them as recorded", id, p.Action, p.Target)
 		}
 		return nil
 	}, "approved", "conversation", strings.TrimSpace(quote), "")
@@ -235,3 +236,5 @@ func (c *Coordinator) AnswerPending(ctx context.Context, a Actor, id, answer str
 		return nil
 	}, "answered", "board", "", answer)
 }
+
+func norm(s string) string { return strings.Join(strings.Fields(s), " ") }

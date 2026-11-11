@@ -29,7 +29,7 @@ func (a *app) hookCmd() *cobra.Command {
 				return nil
 			}
 			defer c.Close()
-			r := hooks.HandleClaude(ctx, c, coord.ActorFromEnv(), args[1], os.Stdin, a.errOut, time.Now())
+			r := hooks.HandleClaude(ctx, c, c.ResolveActor(ctx), args[1], os.Stdin, a.errOut, time.Now())
 			if len(r.Stdout) > 0 {
 				a.out.Write(r.Stdout)
 			}

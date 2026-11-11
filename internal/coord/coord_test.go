@@ -77,9 +77,8 @@ func (f *fixture) startLead(t *testing.T) (int64, Actor) {
 func TestAgentCannotRunUserOperations(t *testing.T) {
 	f := newFixture(t)
 	id, lead := f.startLead(t)
-	_, err := f.c.CreateTask(f.ctx, lead, "x", "")
-	if !errors.Is(err, ErrUserOnly) {
-		t.Fatalf("CreateTask: got %v", err)
+	if err := f.c.CancelTask(f.ctx, lead, id); !errors.Is(err, ErrUserOnly) {
+		t.Fatalf("CancelTask: got %v", err)
 	}
 	pid := must(f.c.AddPending(f.ctx, lead, id, "approval", "git push", "origin main", 0))
 	if err := f.c.ApprovePending(f.ctx, lead, pid, false); !errors.Is(err, ErrUserOnly) {
@@ -172,7 +171,7 @@ func TestConversationApproval(t *testing.T) {
 	f := newFixture(t)
 	id, lead := f.startLead(t)
 	pid := must(f.c.AddPending(f.ctx, lead, id, "approval", "git push", "origin fix/a", 0))
-	fails(t, f.c.RecordApproval(f.ctx, lead, pid, "git push", "origin fix/b", "ok push đi"), "do not match")
+	fails(t, f.c.RecordApproval(f.ctx, lead, pid, "git push", "origin fix/b", "ok push đi"), "differ")
 	fails(t, f.c.RecordApproval(f.ctx, lead, pid, "git push", "origin fix/a", ""), "quote")
 	ok(t, f.c.RecordApproval(f.ctx, lead, pid, "git push", "origin fix/a", "ok push fix/a đi"))
 	items := must(f.c.ListPending(f.ctx, id, false))
@@ -388,4 +387,43 @@ func TestCancelPendingHandoff(t *testing.T) {
 	}
 	fails(t, f.c.AckHandoff(f.ctx, Actor{SessionID: sid}, nil), "no pending handoff")
 	must(f.c.StartLead(f.ctx, User, id, SessionSpec{Provider: "claude"}))
+}
+
+func TestResolveActorByProcessAncestry(t *testing.T) {
+	f := newFixture(t)
+	_, lead := f.startLead(t)
+	_, err := f.c.DB.Exec(`UPDATE sessions SET pid=4242 WHERE id=?`, lead.SessionID)
+	ok(t, err)
+	t.Setenv(SessionEnv, "")
+	orig := Ancestors
+	defer func() { Ancestors = orig }()
+	Ancestors = func(int) []int { return []int{100, 4242, 1} }
+	if a := f.c.ResolveActor(f.ctx); a.SessionID != lead.SessionID {
+		t.Fatalf("got %v, want the lead session", a)
+	}
+	Ancestors = func(int) []int { return []int{100, 1} }
+	if a := f.c.ResolveActor(f.ctx); !a.IsUser() {
+		t.Fatalf("got %v, want user", a)
+	}
+}
+
+func TestAgentCreatesAndDescribesTasks(t *testing.T) {
+	f := newFixture(t)
+	id := must(f.c.CreateTask(f.ctx, User, DraftTitle, "(not described yet)"))
+	sid := must(f.c.StartLead(f.ctx, User, id, SessionSpec{Provider: "claude"}))
+	lead := Actor{SessionID: sid}
+	ok(t, f.c.AckHandoff(f.ctx, lead, nil))
+	ok(t, f.c.DescribeTask(f.ctx, lead, id, "add hello.txt", "add hello.txt and push it"))
+	task := must(f.c.GetTask(f.ctx, id))
+	b := must(f.c.GetBrief(f.ctx, id))
+	if task.Title != "add hello.txt" || b.Fields.Goal != "add hello.txt and push it" {
+		t.Fatalf("%+v %+v", task, b.Fields)
+	}
+	follow := must(f.c.CreateTask(f.ctx, lead, "write docs", ""))
+	if tk := must(f.c.GetTask(f.ctx, follow)); tk.Status != "queued" || tk.LeaseState != "vacant" {
+		t.Fatalf("%+v", tk)
+	}
+	// Record an approval by ID and quote only.
+	pid := must(f.c.AddPending(f.ctx, lead, id, "approval", "git push origin main (commit abc)", "origin main @ abc", 0))
+	ok(t, f.c.RecordApproval(f.ctx, lead, pid, "", "", "ok push"))
 }

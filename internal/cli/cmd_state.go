@@ -286,8 +286,8 @@ func (a *app) pendingCmd() *cobra.Command {
 		func(ctx context.Context, c *coord.Coordinator, actor coord.Actor, args []string) error {
 			return c.RecordApproval(ctx, actor, args[0], raAction, raTarget, raQuote)
 		})
-	recApproval.Flags().StringVar(&raAction, "action", "", "exact action as recorded")
-	recApproval.Flags().StringVar(&raTarget, "target", "", "exact target as recorded")
+	recApproval.Flags().StringVar(&raAction, "action", "", "optional; must match the recorded action")
+	recApproval.Flags().StringVar(&raTarget, "target", "", "optional; must match the recorded target")
 	recApproval.Flags().StringVar(&raQuote, "quote", "", "the user's words that approved it")
 
 	cmd.AddCommand(list, add, recApproval,

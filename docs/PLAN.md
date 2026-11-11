@@ -216,7 +216,7 @@ Each adapter exposes: detect/capability report, interactive launch and resume co
 └────────────────────────────────────────────────────────────────┘
 ```
 
-The user's entry point is `agent-shiftboard [task description]`: it initializes the project if needed, creates or attaches to the workspace, and the main slot asks for a task (unless one was given) and runs the lead's CLI right there. One tmux session per project holds this layout (D-15). The left slot is the current lead's real CLI pane; the right pane is the Bubble Tea board; the bottom line names the lead's provider, permission mode, and brief revision. Closing the terminal detaches; reopening reattaches.
+The user's entry point is `agent-shiftboard`: it initializes the project if needed, creates or attaches to the workspace, and the main slot runs the lead's CLI right away, continuing the most recently updated open task or a new draft task. The user just talks to the lead; the lead describes the task (`task describe`) and may record further tasks (`task new`) from the conversation. One tmux session per project holds this layout (D-15). The left slot is the current lead's real CLI pane; the right pane is the Bubble Tea board; the bottom line names the lead's provider, permission mode, and brief revision. Closing the terminal detaches; reopening reattaches.
 
 On a lead change:
 
@@ -249,7 +249,7 @@ User commands (board or terminal; refused from inside a managed agent session; n
 
 Agent operations (CLI subcommands and `agent-shiftboard mcp`; covered by allowlist snippets):
 
-- `brief update`, `rule add`, `pending add|record-answer|record-approval|withdraw`, `delegation propose|log`.
+- `task new|describe`, `brief update`, `rule add`, `pending add|record-answer|record-approval|withdraw`, `delegation propose|log`.
 - `effect plan|start|finish|reconcile`, `milestone record`.
 - `delegate <task>` (creates an assignment), `assignment submit|accept|reject|cancel`, `handoff ack`.
 - `task block|unblock|close`.

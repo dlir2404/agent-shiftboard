@@ -26,10 +26,14 @@ type Task struct {
 	UpdatedAt     string `json:"updated_at"`
 }
 
-// CreateTask creates a queued task with an initial brief (user operation).
+// CreateTask creates a queued task with an initial brief. The user or a
+// managed session may create tasks; a new task has no lead until one is
+// started for it.
 func (c *Coordinator) CreateTask(ctx context.Context, a Actor, title, goal string) (int64, error) {
-	if err := requireUser(a); err != nil {
-		return 0, err
+	if !a.IsUser() {
+		if _, err := loadSession(c.DB, a.SessionID); err != nil {
+			return 0, err
+		}
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
@@ -188,4 +192,43 @@ func (c *Coordinator) taskTransition(ctx context.Context, a Actor, id int64, fro
 		c.changed(id)
 	}
 	return err
+}
+
+// DraftTitle marks a task created before the user described it.
+const DraftTitle = "New task (not described yet)"
+
+// DescribeTask sets a task's title and, when goal is given, the brief goal
+// (lead or user). The lead uses it once the user has said what they want.
+func (c *Coordinator) DescribeTask(ctx context.Context, a Actor, id int64, title, goal string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("title is required")
+	}
+	if err := secretscan.Check("title", title+" "+goal); err != nil {
+		return err
+	}
+	err := c.tx(ctx, func(tx *sql.Tx) error {
+		if err := c.checkWrite(tx, id, a, accessLead); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`UPDATE tasks SET title=?,updated_at=? WHERE id=?`, title, c.now(), id); err != nil {
+			return err
+		}
+		return c.event(tx, id, a, "task_described", title)
+	})
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(goal) != "" {
+		b, err := c.GetBrief(ctx, id)
+		if err != nil {
+			return err
+		}
+		raw, _ := json.Marshal(strings.TrimSpace(goal))
+		if _, err := c.UpdateBrief(ctx, a, id, b.Revision, BriefPatch{Set: map[string]json.RawMessage{"goal": raw}}); err != nil {
+			return err
+		}
+	}
+	c.changed(id)
+	return nil
 }

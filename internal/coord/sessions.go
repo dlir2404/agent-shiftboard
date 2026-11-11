@@ -432,6 +432,14 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 			if now.Sub(parseTime(p.updated)) <= ackTimeout {
 				continue
 			}
+			// A new session that has reported (idle, running, ...) is alive
+			// and waiting for the user's first message; only a session that
+			// never reported times out.
+			var st string
+			_ = tx.QueryRow(`SELECT status FROM sessions WHERE id=?`, p.pending).Scan(&st)
+			if st != "starting" {
+				continue
+			}
 			state := "suspended"
 			if p.holder == "" {
 				state = "vacant"

@@ -23,7 +23,7 @@ import (
 )
 
 // startCmd runs in the main slot (or, without tmux, in the current
-// terminal): it asks for a task, runs the lead's native CLI right here so
+// terminal): it continues the latest open task (or a new draft task), runs the lead's native CLI right here so
 // the user sees every native prompt, and offers resume or a new session
 // when the CLI exits.
 func (a *app) startCmd() *cobra.Command {
@@ -51,7 +51,7 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 	}
 	for {
 		if taskID == 0 {
-			id, err := a.chooseTask(ctx, in)
+			id, err := a.defaultTask(ctx)
 			if err != nil {
 				return err
 			}
@@ -60,7 +60,7 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 		if err := a.runLeadHere(ctx, taskID, mode); err != nil {
 			fmt.Fprintln(a.errOut, "\nerror:", err)
 		}
-		fmt.Fprint(a.out, "\nThe lead CLI exited. [r] resume it · [n] new lead session · [t] tasks · [q] shell: ")
+		fmt.Fprint(a.out, "\nThe lead CLI exited. [r] resume · [n] new task · [t] switch task · [l] fresh lead session for this task · [q] shell: ")
 		line, err := in.ReadString('\n')
 		if err != nil {
 			return execShell()
@@ -69,18 +69,28 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 		case "r", "":
 			mode = "resume"
 		case "n":
-			mode = "new"
+			id, err := a.newDraftTask(ctx)
+			if err != nil {
+				return err
+			}
+			taskID, mode = id, "new"
 		case "t":
-			taskID, mode = 0, "auto"
+			id, err := a.pickTask(ctx, in, taskID)
+			if err != nil {
+				return err
+			}
+			taskID, mode = id, "auto"
+		case "l":
+			mode = "new"
 		default:
 			return execShell()
 		}
 	}
 }
 
-// chooseTask lists open tasks and reads either a task number or a new task
-// description.
-func (a *app) chooseTask(ctx context.Context, in *bufio.Reader) (int64, error) {
+// defaultTask continues the most recently updated open task, or creates a
+// draft task the lead describes once the user says what they want.
+func (a *app) defaultTask(ctx context.Context) (int64, error) {
 	c, err := a.open(ctx)
 	if err != nil {
 		return 0, err
@@ -90,42 +100,66 @@ func (a *app) chooseTask(ctx context.Context, in *bufio.Reader) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	var best coord.Task
+	for _, t := range ts {
+		if (t.Status == "queued" || t.Status == "active" || t.Status == "blocked") && t.UpdatedAt > best.UpdatedAt {
+			best = t
+		}
+	}
+	if best.ID > 0 {
+		return best.ID, nil
+	}
+	return c.CreateTask(ctx, coord.User, coord.DraftTitle, "(not described yet: ask the user what they want)")
+}
+
+func (a *app) newDraftTask(ctx context.Context) (int64, error) {
+	c, err := a.open(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	return c.CreateTask(ctx, coord.User, coord.DraftTitle, "(not described yet: ask the user what they want)")
+}
+
+// pickTask lists open tasks and reads a task number.
+func (a *app) pickTask(ctx context.Context, in *bufio.Reader, current int64) (int64, error) {
+	c, err := a.open(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ts, err := c.ListTasks(ctx)
+	c.Close()
+	if err != nil {
+		return 0, err
+	}
 	var open []coord.Task
 	for _, t := range ts {
 		if t.Status == "queued" || t.Status == "active" || t.Status == "blocked" {
 			open = append(open, t)
 		}
 	}
-	fmt.Fprintf(a.out, "AgentShiftboard · %s\n\n", c.Root)
-	if len(open) > 0 {
-		fmt.Fprintln(a.out, "Open tasks:")
-		for _, t := range open {
-			fmt.Fprintf(a.out, "  %d) %s  (%s, lead %s)\n", t.ID, t.Title, t.Status, t.LeaseState)
-		}
-		fmt.Fprint(a.out, "\nType a task number to continue it, or describe a new task:\n> ")
-	} else {
-		fmt.Fprint(a.out, "Describe a task for the lead:\n> ")
+	if len(open) == 0 {
+		return a.newDraftTask(ctx)
+	}
+	fmt.Fprintln(a.out, "\nOpen tasks:")
+	for _, t := range open {
+		fmt.Fprintf(a.out, "  %d) %s  (%s, lead %s)\n", t.ID, t.Title, t.Status, t.LeaseState)
 	}
 	for {
+		fmt.Fprint(a.out, "Task number: ")
 		line, err := in.ReadString('\n')
 		if err != nil {
-			return 0, errors.New("no task given")
+			return current, nil
 		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			fmt.Fprint(a.out, "> ")
-			continue
-		}
-		if n, err := strconv.ParseInt(strings.TrimPrefix(line, "#"), 10, 64); err == nil {
+		n, err := strconv.ParseInt(strings.TrimPrefix(strings.TrimSpace(line), "#"), 10, 64)
+		if err == nil {
 			for _, t := range open {
 				if t.ID == n {
 					return n, nil
 				}
 			}
-			fmt.Fprint(a.out, "No open task with that number. Try again:\n> ")
-			continue
 		}
-		return c.CreateTask(ctx, coord.User, titleFrom(line), line)
+		fmt.Fprintln(a.out, "Not an open task.")
 	}
 }
 
@@ -202,12 +236,12 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode string) error 
 			return err
 		}
 		spec = a.launchSpec(c, sid, native, provider)
-		spec.LaunchContext, spec.InitialPrompt = launch, initialPrompt
+		spec.LaunchContext = launch
 		if command, err = adapter.ClaudeLaunch(spec); err != nil {
 			c.Close()
 			return err
 		}
-		fmt.Fprintf(a.out, "Starting Claude Code as the lead of task #%d. Answer any prompt it shows (for example folder trust); it will acknowledge the brief first.\n", taskID)
+		fmt.Fprintf(a.out, "Starting Claude Code as the lead of task #%d.\n", taskID)
 	}
 	_ = c.SetSessionRuntime(ctx, sid, os.Getenv("TMUX_PANE"), 0, "")
 	c.Close()
