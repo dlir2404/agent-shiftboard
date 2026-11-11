@@ -63,9 +63,21 @@ func (a *app) rootCmd() *cobra.Command {
 		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(),
 	)
 	root.AddCommand(a.startCmd())
-	root.Use = "agent-shiftboard [task description]"
+	root.Use = "agent-shiftboard"
+	root.SuggestionsMinimumDistance = 2
 	root.RunE = a.rootRun
-	root.Args = cobra.ArbitraryArgs
+	// No positional arguments: a mistyped subcommand must be an error with
+	// a suggestion, not a new task.
+	root.Args = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		msg := fmt.Sprintf("unknown command %q", args[0])
+		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+			msg += fmt.Sprintf("; did you mean %q?", s[0])
+		}
+		return fmt.Errorf("%s (run `agent-shiftboard --help`; to start working, run `agent-shiftboard` alone)", msg)
+	}
 	return root
 }
 

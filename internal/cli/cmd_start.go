@@ -358,18 +358,6 @@ func (a *app) rootRun(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	var taskID int64
-	if len(args) > 0 {
-		c, err := a.open(ctx)
-		if err != nil {
-			return err
-		}
-		desc := strings.Join(args, " ")
-		taskID, err = c.CreateTask(ctx, coord.User, titleFrom(desc), desc)
-		c.Close()
-		if err != nil {
-			return err
-		}
-	}
 	if !tmux.Available() {
 		fmt.Fprintln(a.errOut, "tmux not found: running the lead in this terminal. Install tmux (brew install tmux) for the workspace with the status board; meanwhile run `agent-shiftboard board` in another terminal.")
 		return a.startLoop(ctx, taskID, false)
