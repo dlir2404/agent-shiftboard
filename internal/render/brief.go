@@ -250,3 +250,31 @@ func LaunchContext(v View, sessionID string, readback []string) string {
 	b.WriteString(Markdown(v, 0))
 	return b.String()
 }
+
+// WorkerContext is the text a worker session receives at launch.
+func WorkerContext(v View, a coord.Assignment, sessionID string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "You are a worker session (session %s) started by the lead of task #%d through AgentShiftboard. You work on one assignment and report back; the lead owns the task brief.\n\n", sessionID, v.Task.ID)
+	fmt.Fprintf(&b, "Assignment %s\nScope: %s\n", a.ID, a.Scope)
+	if a.Expected != "" {
+		fmt.Fprintf(&b, "Expected output: %s\n", a.Expected)
+	}
+	if a.Constraints != "" {
+		fmt.Fprintf(&b, "Constraints: %s\n", a.Constraints)
+	}
+	if a.Worktree != "" {
+		fmt.Fprintf(&b, "Worktree: %s\n", a.Worktree)
+	}
+	fmt.Fprintf(&b, `
+When you are done, submit a concise result (what you did, where, evidence):
+  agent-shiftboard assignment submit %s "<result>" --evidence "<commits, files, test output summary>"
+
+Working rules:
+- Do only this assignment. Do not update the task brief; the lead decides what to accept.
+- Before an external or non-idempotent action (git push, deploy, DB write, sending a message): effect plan, effect start, then effect finish with evidence. Prefer leaving such actions to the lead unless the scope says otherwise.
+- Follow the rules in force below. Never write secret values into task state.
+
+`, a.ID)
+	b.WriteString(Markdown(v, 0))
+	return b.String()
+}

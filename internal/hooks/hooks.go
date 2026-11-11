@@ -27,8 +27,19 @@ type Result struct {
 
 // HandleClaude processes one Claude Code hook event.
 func HandleClaude(ctx context.Context, c *coord.Coordinator, actor coord.Actor, event string, stdin io.Reader, stderr io.Writer, now time.Time) Result {
+	return Handle(ctx, c, "claude", actor, event, stdin, stderr, now)
+}
+
+// Handle processes one hook event from a provider whose hooks use the
+// Claude-compatible event names and payload (Claude Code, Codex).
+func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor coord.Actor, event string, stdin io.Reader, stderr io.Writer, now time.Time) Result {
 	if actor.IsUser() {
 		return Result{} // not a managed session
+	}
+	p, err := adapter.Get(provider)
+	if err != nil {
+		fmt.Fprintln(stderr, "agent-shiftboard hook:", err)
+		return Result{}
 	}
 	var in adapter.HookInput
 	if err := json.NewDecoder(stdin).Decode(&in); err != nil {
@@ -43,7 +54,7 @@ func HandleClaude(ctx context.Context, c *coord.Coordinator, actor coord.Actor, 
 	if in.HookEventName == "SessionStart" && in.SessionID != "" {
 		report(stderr, c.SetSessionRuntime(ctx, sid, "", 0, in.SessionID))
 	}
-	obs := adapter.ClaudeObservation(in, now)
+	obs := p.Observe(in, now)
 	if obs.Turn {
 		report(stderr, c.ObserveTurn(ctx, sid))
 	}
@@ -61,8 +72,15 @@ func HandleClaude(ctx context.Context, c *coord.Coordinator, actor coord.Actor, 
 			}})
 		}
 	case "UserPromptSubmit":
+		var msgs []string
 		if msg := staleNudge(ctx, c, sid); msg != "" {
-			return additionalContext("UserPromptSubmit", msg)
+			msgs = append(msgs, msg)
+		}
+		if msg := submittedWork(ctx, c, sid); msg != "" {
+			msgs = append(msgs, msg)
+		}
+		if len(msgs) > 0 {
+			return additionalContext("UserPromptSubmit", strings.Join(msgs, "\n\n"))
 		}
 	case "SessionStart":
 		// After compaction or /clear the model loses detail; give it the
@@ -183,4 +201,30 @@ func briefContext(ctx context.Context, c *coord.Coordinator, sid string) string 
 		return ""
 	}
 	return "AgentShiftboard task state after context reset. Rules and open items below remain in force.\n\n" + render.Markdown(v, c.Policy.BriefTokenBudget)
+}
+
+// submittedWork tells the lead about worker results waiting for review.
+func submittedWork(ctx context.Context, c *coord.Coordinator, sid string) string {
+	t, err := c.ResolveTask(ctx, coord.Actor{SessionID: sid}, 0)
+	if err != nil {
+		return ""
+	}
+	task, err := c.GetTask(ctx, t)
+	if err != nil || task.LeadSession != sid {
+		return ""
+	}
+	as, err := c.ListAssignments(ctx, t)
+	if err != nil {
+		return ""
+	}
+	var lines []string
+	for _, a := range as {
+		if a.Status == "submitted" {
+			lines = append(lines, fmt.Sprintf("- %s (%s worker): %s", a.ID, a.Provider, a.Result))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "AgentShiftboard: worker results waiting for your review (accept with `agent-shiftboard assignment accept <A-id>` or reject with --reason):\n" + strings.Join(lines, "\n")
 }

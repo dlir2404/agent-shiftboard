@@ -51,10 +51,11 @@ set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
 set -g status-left " AgentShiftboard "
 set -g status-left-length 20
-set -g status-right " click a pane to focus · Ctrl+Q leave (sessions keep running) "
+set -g status-right " click a pane or a window name · Ctrl+Q leave "
 set -g status-right-length 80
-set -g window-status-format ""
-set -g window-status-current-format ""
+set -g window-status-format " #W "
+set -g window-status-current-format "#[reverse] #W #[noreverse]"
+set -g status-justify centre
 set -g pane-active-border-style "fg=colour39"
 bind -n C-q detach-client
 `

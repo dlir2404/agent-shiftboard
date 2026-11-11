@@ -22,6 +22,7 @@ type LaunchSpec struct {
 	LaunchContext  string // file holding the text given at launch (brief, rules, readback)
 	InitialPrompt  string // first user turn for a new session
 	PermissionMode string // from user policy; empty keeps the CLI's own settings
+	Role           string // lead | worker
 }
 
 // Env returns the environment for the session's window and MCP server.

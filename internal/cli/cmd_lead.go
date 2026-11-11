@@ -105,8 +105,8 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 		provider = a.defaultProvider(c)
 	}
 	if !registerOnly {
-		if provider != "claude" {
-			return fmt.Errorf("the %s adapter is not implemented yet (Claude Code first; Codex in Phase 3, agy and hermes in Phase 5)", provider)
+		if _, err := adapter.Get(provider); err != nil {
+			return err
 		}
 		if !tmux.Available() {
 			return tmux.ErrNoTmux
@@ -129,7 +129,7 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 		}
 	}
 	native := ""
-	if provider == "claude" {
+	if p, err := adapter.Get(provider); err == nil && p.PreassignsID() {
 		native = uuid.NewString()
 	}
 	sid, err := c.StartLead(ctx, actor, id, coord.SessionSpec{Provider: provider, NativeSessionID: native,
@@ -148,8 +148,12 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 		})
 	}
 	spec := a.launchSpec(c, sid, native, provider)
-	spec.LaunchContext, spec.InitialPrompt = launch, initialPrompt
-	command, err := adapter.ClaudeLaunch(spec)
+	spec.Role, spec.LaunchContext, spec.InitialPrompt = "lead", launch, initialPrompt
+	prov, err := adapter.Get(provider)
+	if err != nil {
+		return err
+	}
+	command, err := prov.Launch(spec)
 	if err != nil {
 		return err
 	}
@@ -232,8 +236,8 @@ func (a *app) resumeLead(ctx context.Context, c *coord.Coordinator, actor coord.
 			s = x
 		}
 	}
-	if s.Provider != "claude" {
-		return fmt.Errorf("resume for %s is not implemented yet", s.Provider)
+	if _, err := adapter.Get(s.Provider); err != nil {
+		return err
 	}
 	ws := tmux.New(tmux.Exec{}, c.Root)
 	if _, err := ws.Ensure(nil); err != nil {

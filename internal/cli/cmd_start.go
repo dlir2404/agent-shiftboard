@@ -45,6 +45,7 @@ func (a *app) startCmd() *cobra.Command {
 
 func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error {
 	in := bufio.NewReader(os.Stdin)
+	provider := ""
 	mode := "auto"
 	if forceNew {
 		mode = "new"
@@ -57,10 +58,11 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 			}
 			taskID = id
 		}
-		if err := a.runLeadHere(ctx, taskID, mode); err != nil {
+		if err := a.runLeadHere(ctx, taskID, mode, provider); err != nil {
 			fmt.Fprintln(a.errOut, "\nerror:", err)
 		}
-		fmt.Fprint(a.out, "\nThe lead CLI exited. [r] resume · [n] new task · [t] switch task · [l] fresh lead session for this task · [q] shell: ")
+		provider = ""
+		fmt.Fprint(a.out, "\nThe lead CLI exited. [r] resume · [s] switch lead to another CLI · [n] new task · [t] switch task · [l] fresh lead session · [q] shell: ")
 		line, err := in.ReadString('\n')
 		if err != nil {
 			return execShell()
@@ -82,6 +84,16 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 			taskID, mode = id, "auto"
 		case "l":
 			mode = "new"
+		case "s":
+			fmt.Fprintf(a.out, "New lead CLI (%s): ", strings.Join(adapter.Names(), ", "))
+			name, _ := in.ReadString('\n')
+			name = strings.TrimSpace(name)
+			if _, err := adapter.Get(name); err != nil {
+				fmt.Fprintln(a.errOut, err)
+				mode = "resume"
+				continue
+			}
+			provider, mode = name, "new"
 		default:
 			return execShell()
 		}
@@ -173,7 +185,7 @@ func titleFrom(desc string) string {
 // runLeadHere runs the lead's CLI as a child of this process in this
 // terminal. mode: auto (resume the holder if possible, else new), resume,
 // or new.
-func (a *app) runLeadHere(ctx context.Context, taskID int64, mode string) error {
+func (a *app) runLeadHere(ctx context.Context, taskID int64, mode, provider string) error {
 	c, err := a.open(ctx)
 	if err != nil {
 		return err
@@ -197,7 +209,8 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode string) error 
 		t, _ = c.GetTask(ctx, taskID)
 	}
 	holder := sessionByID(ctx, c, taskID, t.LeadSession)
-	canResume := holder.ID != "" && holder.Provider == "claude" && holder.NativeSessionID != "" &&
+	_, adapterErr := adapter.Get(holder.Provider)
+	canResume := holder.ID != "" && adapterErr == nil && holder.NativeSessionID != "" &&
 		(t.LeaseState == "held" || t.LeaseState == "suspended")
 	if mode == "resume" && !canResume {
 		mode = "new"
@@ -210,20 +223,27 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode string) error 
 	var command []string
 	var spec adapter.LaunchSpec
 	if mode == "resume" {
+		p, _ := adapter.Get(holder.Provider)
 		sid = holder.ID
 		spec = a.launchSpec(c, sid, holder.NativeSessionID, holder.Provider)
-		if command, err = adapter.ClaudeResume(spec); err != nil {
+		if command, err = p.Resume(spec); err != nil {
 			c.Close()
 			return err
 		}
-		fmt.Fprintf(a.out, "Resuming the lead's Claude Code session for task #%d…\n", taskID)
+		fmt.Fprintf(a.out, "Resuming the lead's %s session for task #%d…\n", holder.Provider, taskID)
 	} else {
-		provider := a.defaultProvider(c)
-		if provider != "claude" {
-			c.Close()
-			return fmt.Errorf("the %s adapter is not implemented yet; set lead_priority to claude", provider)
+		if provider == "" {
+			provider = a.defaultProvider(c)
 		}
-		native := uuid.NewString()
+		p, err := adapter.Get(provider)
+		if err != nil {
+			c.Close()
+			return err
+		}
+		native := ""
+		if p.PreassignsID() {
+			native = uuid.NewString()
+		}
 		sid, err = c.StartLead(ctx, coord.User, taskID, coord.SessionSpec{Provider: provider, NativeSessionID: native,
 			PermissionMode: c.Policy.Providers[provider].PermissionMode})
 		if err != nil {
@@ -236,12 +256,16 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode string) error 
 			return err
 		}
 		spec = a.launchSpec(c, sid, native, provider)
-		spec.LaunchContext = launch
-		if command, err = adapter.ClaudeLaunch(spec); err != nil {
+		spec.Role, spec.LaunchContext = "lead", launch
+		if command, err = p.Launch(spec); err != nil {
 			c.Close()
 			return err
 		}
-		fmt.Fprintf(a.out, "Starting Claude Code as the lead of task #%d.\n", taskID)
+		if holder.ID != "" && holder.Provider != provider {
+			fmt.Fprintf(a.out, "Handing task #%d from %s to %s. The new lead reads the brief, rules, and open items first.\n", taskID, holder.Provider, provider)
+		} else {
+			fmt.Fprintf(a.out, "Starting %s as the lead of task #%d.\n", provider, taskID)
+		}
 	}
 	_ = c.SetSessionRuntime(ctx, sid, os.Getenv("TMUX_PANE"), 0, "")
 	c.Close()

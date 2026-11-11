@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dlir2404/agent-shiftboard/internal/adapter"
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/hooks"
 	"github.com/dlir2404/agent-shiftboard/internal/tmux"
@@ -19,7 +20,7 @@ func (a *app) hookCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "hook <provider> <event>", Short: "Provider hook handler", Hidden: true, Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if args[0] != "claude" {
+			if _, err := adapter.Get(args[0]); err != nil {
 				return nil
 			}
 			ctx := cmd.Context()
@@ -29,7 +30,7 @@ func (a *app) hookCmd() *cobra.Command {
 				return nil
 			}
 			defer c.Close()
-			r := hooks.HandleClaude(ctx, c, c.ResolveActor(ctx), args[1], os.Stdin, a.errOut, time.Now())
+			r := hooks.Handle(ctx, c, args[0], c.ResolveActor(ctx), args[1], os.Stdin, a.errOut, time.Now())
 			if len(r.Stdout) > 0 {
 				a.out.Write(r.Stdout)
 			}
