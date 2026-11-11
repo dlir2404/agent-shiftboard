@@ -43,6 +43,8 @@ var (
 	OpenWorker func(sessionID string) error
 	// Shown returns the pane on the right of the workspace.
 	Shown func() string
+	// Wake types one line into a session's pane and submits it.
+	Wake func(pane, text string) error
 )
 
 // Run starts the board. It refuses to run inside a managed agent session,
@@ -217,6 +219,7 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		s.items = append(s.items, lead...)
 		s.items = append(s.items, workers...)
+		wakeLead(ctx, c, t, ss, as)
 		for _, n := range needsYou(ctx, c, t.ID) {
 			if seen[n.kind+n.id] {
 				continue
@@ -755,4 +758,37 @@ func lastN(xs []string, n int) []string {
 		return xs[len(xs)-n:]
 	}
 	return xs
+}
+
+// wakeLead tells an idle lead that a worker submitted a result, once per
+// assignment. It never types into a session that is busy, waiting for an
+// approval, or showing a native prompt.
+func wakeLead(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coord.Session, as []coord.Assignment) {
+	if Wake == nil || !c.Policy.WakeLead() {
+		return
+	}
+	var lead coord.Session
+	for _, s := range ss {
+		if s.ID == t.LeadSession {
+			lead = s
+		}
+	}
+	if lead.PaneID == "" || lead.Status != "idle" || lead.PaneID == os.Getenv("TMUX_PANE") {
+		return
+	}
+	if Capture != nil && nativePrompt(Capture(lead.PaneID, 40)) != "" {
+		return
+	}
+	for _, a := range as {
+		if a.Status != "submitted" {
+			continue
+		}
+		first, err := c.Note(ctx, t.ID, "lead_woken", a.ID)
+		if err != nil || !first {
+			continue
+		}
+		msg := fmt.Sprintf("AgentShiftboard: %s worker finished %s (%s). Review the result (assignment list) and accept or reject it.", a.Provider, a.ID, trunc(a.Scope, 60))
+		_ = Wake(lead.PaneID, msg)
+		return // one notice per refresh
+	}
 }

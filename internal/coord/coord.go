@@ -240,3 +240,16 @@ func (c *Coordinator) ResolveTask(ctx context.Context, a Actor, taskID int64) (i
 	}
 	return c.sessionTask(ctx, a)
 }
+
+// Note records a lifecycle marker once; it reports false when the same
+// marker already exists.
+func (c *Coordinator) Note(ctx context.Context, taskID int64, kind, detail string) (bool, error) {
+	var n int
+	if err := c.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM events WHERE task_id=? AND kind=? AND detail=?`, taskID, kind, detail).Scan(&n); err != nil {
+		return false, err
+	}
+	if n > 0 {
+		return false, nil
+	}
+	return true, c.tx(ctx, func(tx *sql.Tx) error { return c.event(tx, taskID, User, kind, detail) })
+}

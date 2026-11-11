@@ -68,3 +68,36 @@ func TestNativePrompt(t *testing.T) {
 		t.Fatal("false positive")
 	}
 }
+
+func TestWakeLeadOncePerResult(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	t.Setenv("TMUX_PANE", "%0")
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	lead := coord.Actor{SessionID: sid}
+	_ = c.AckHandoff(ctx, lead, nil)
+	_ = c.SetSessionRuntime(ctx, sid, "%5", 0, "")
+	_ = c.Observe(ctx, lead, sid, "idle", "", "hook")
+	aid, _ := c.CreateAssignment(ctx, lead, coord.AssignmentInput{TaskID: id, Scope: "write README"})
+	wid, _ := c.RegisterWorker(ctx, lead, aid, coord.SessionSpec{Provider: "codex"})
+	if err := c.SubmitAssignment(ctx, coord.Actor{SessionID: wid}, aid, "done", ""); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	var sent []string
+	Wake = func(pane, text string) error { sent = append(sent, pane+": "+text); return nil }
+	defer func() { Wake = nil }()
+	loadSnapshot(open)
+	loadSnapshot(open)
+	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%5: AgentShiftboard: codex worker finished A-1") {
+		t.Fatalf("wakes: %v", sent)
+	}
+}

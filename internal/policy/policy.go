@@ -30,6 +30,9 @@ type Policy struct {
 	// A new session must acknowledge within this long.
 	HandoffAckTimeoutSeconds int      `toml:"handoff_ack_timeout_seconds"`
 	LeadPriority             []string `toml:"lead_priority"`
+	// WakeLeadOnResults types a one-line notice into an idle lead's
+	// session when a worker submits a result. Default true.
+	WakeLeadOnResults *bool `toml:"wake_lead_on_results"`
 	// Per-provider settings, e.g. [providers.claude] permission_mode = "manual".
 	Providers map[string]Provider `toml:"providers"`
 	// External-action patterns (regular expressions) matched against shell
@@ -133,6 +136,8 @@ const SampleProjectConfig = `# AgentShiftboard project policy. Only you edit thi
 # unknown_grace_seconds = 300
 # handoff_ack_timeout_seconds = 300
 # lead_priority = ["claude", "codex"]
+# Tell an idle lead when a worker submits a result (types one line into it).
+# wake_lead_on_results = true
 
 # [providers.claude]
 # permission_mode = "manual"
@@ -143,3 +148,6 @@ const SampleProjectConfig = `# AgentShiftboard project policy. Only you edit thi
 # shell = ['^git\s+push\b']
 # mcp_tools = ['^mcp__.*__(send|post|publish|create|update|delete)']
 `
+
+// WakeLead reports whether idle leads are told about worker results.
+func (p Policy) WakeLead() bool { return p.WakeLeadOnResults == nil || *p.WakeLeadOnResults }
