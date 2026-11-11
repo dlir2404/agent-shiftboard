@@ -209,3 +209,23 @@ func TestCloseFinishedIdleWorkers(t *testing.T) {
 		t.Fatalf("closed: %v", closed)
 	}
 }
+
+func TestViewFitsHeight(t *testing.T) {
+	long := strings.Repeat("a long decision that wraps several times in a narrow list ", 3)
+	var dec []string
+	for i := 0; i < 20; i++ {
+		dec = append(dec, long)
+	}
+	m := model{width: 38, height: 30, snap: snapshot{items: []item{
+		{kind: "task", id: "#4", text: "README via Codex", active: true, task: coord.Task{ID: 4},
+			brief: coord.Brief{Fields: coord.BriefFields{Goal: long, NextAction: long, Decisions: dec, Completed: dec}}},
+		{kind: "item", id: "I-1", text: "write README", status: "done", depth: 1},
+	}}}
+	v := m.View()
+	if n := strings.Count(v, "\n") + 1; n > 30 {
+		t.Fatalf("view has %d lines for a 30-line pane", n)
+	}
+	if !strings.Contains(v, "AgentShiftboard") || !strings.Contains(v, "#4") {
+		t.Fatalf("top of the list scrolled away:\n%s", v)
+	}
+}

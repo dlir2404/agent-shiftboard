@@ -736,38 +736,18 @@ func (m model) View() string {
 	if w == 0 {
 		w, h = 38, 40
 	}
-	var b strings.Builder
-	b.WriteString(accent.Render("AgentShiftboard") + "\n")
-	b.WriteString(good.Render(fmt.Sprintf("● %d running", s.running)) + "  " + warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)) + "\n\n")
+	// Everything must fit in h lines, or the terminal scrolls the top of
+	// the list away: header, rows, separator, detail (capped), footer.
+	var head []string
+	head = append(head, accent.Render("AgentShiftboard"),
+		good.Render(fmt.Sprintf("● %d running", s.running))+"  "+warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)), "")
 	if len(s.items) == 0 {
-		b.WriteString(dim.Render("No open tasks.\nPress n to start one.") + "\n")
+		head = append(head, dim.Render("No open sessions."), dim.Render("Press n to start one."))
 	}
 	if m.filter != "" {
-		b.WriteString(accent.Render("/"+m.filter) + dim.Render("  esc clears") + "\n")
+		head = append(head, accent.Render("/"+m.filter)+dim.Render("  esc clears"))
 	}
-	var rows []string
-	for i, it := range m.visible() {
-		line := rowText(it, w-3)
-		if it.pane != "" && it.pane == s.shown {
-			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
-		}
-		if i == m.cursor {
-			line = cursor.Render(padRight("▶"+strings.TrimPrefix(line, " "), w))
-		}
-		rows = append(rows, line)
-	}
-	detail := ""
-	if it, ok := m.selected(); ok {
-		detail = compactDetail(it, w)
-	}
-	room := max(4, h-4-strings.Count(detail, "\n")-3)
-	if len(rows) > room {
-		start := min(max(0, m.cursor-room/2), len(rows)-room)
-		rows = rows[start : start+room]
-	}
-	b.WriteString(strings.Join(rows, "\n") + "\n")
-	b.WriteString(dim.Render(strings.Repeat("─", w)) + "\n")
-	b.WriteString(detail)
+
 	foot := dim.Render("✓ done ● doing ○ to do ◎ review\n↑↓ · →/enter open · space fold · / find · n new session")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
@@ -781,7 +761,51 @@ func (m model) View() string {
 	} else if m.msg != "" {
 		foot = m.msg
 	}
-	return b.String() + "\n" + lipgloss.NewStyle().Width(w).Render(foot)
+	footLines := strings.Split(lipgloss.NewStyle().Width(w).Render(foot), "\n")
+
+	var detail []string
+	if it, ok := m.selected(); ok {
+		detail = strings.Split(strings.TrimRight(compactDetail(it, w), "\n"), "\n")
+	}
+	maxDetail := max(3, h/3)
+	if len(detail) > maxDetail {
+		detail = append(detail[:maxDetail-1], dim.Render("…"))
+	}
+
+	var rows []string
+	for i, it := range m.visible() {
+		line := rowText(it, w-3)
+		if it.pane != "" && it.pane == s.shown {
+			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
+		}
+		if i == m.cursor {
+			line = cursor.Render(padRight("▶"+strings.TrimPrefix(line, " "), w))
+		}
+		rows = append(rows, line)
+	}
+	room := h - len(head) - 1 - len(detail) - len(footLines)
+	if room < 3 {
+		// Small terminal: give the list priority over the detail.
+		cut := min(len(detail), 3-room)
+		detail = detail[:len(detail)-cut]
+		room = max(1, h-len(head)-1-len(detail)-len(footLines))
+	}
+	if len(rows) > room {
+		start := min(max(0, m.cursor-room/2), len(rows)-room)
+		rows = rows[start : start+room]
+	}
+	out := append([]string{}, head...)
+	out = append(out, rows...)
+	out = append(out, dim.Render(strings.Repeat("─", w)))
+	out = append(out, detail...)
+	if pad := h - len(out) - len(footLines); pad > 0 {
+		out = append(out, make([]string, pad)...)
+	}
+	out = append(out, footLines...)
+	if len(out) > h {
+		out = out[:h]
+	}
+	return strings.Join(out, "\n")
 }
 
 // compactDetail is a short description of the selected row for the
