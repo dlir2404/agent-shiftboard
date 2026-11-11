@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -17,6 +18,7 @@ import (
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/paths"
 	"github.com/dlir2404/agent-shiftboard/internal/render"
+	"github.com/dlir2404/agent-shiftboard/internal/tmux"
 )
 
 // Version is set at build time.
@@ -79,6 +81,9 @@ func (a *app) open(ctx context.Context) (*coord.Coordinator, error) {
 	if err != nil {
 		return nil, err
 	}
+	if ud, err := paths.UserDir(); err == nil {
+		_ = tmux.WriteConfig(filepath.Join(ud, "tmux.conf"))
+	}
 	c.OnTaskChange = func(id int64) {
 		if err := render.WriteBrief(context.Background(), c, id); err != nil {
 			fmt.Fprintln(a.errOut, "warning: could not render brief:", err)
@@ -106,11 +111,24 @@ func (a *app) with(cmd *cobra.Command, fn func(ctx context.Context, c *coord.Coo
 
 // taskFor resolves --task or the actor's own task.
 func (a *app) taskFor(ctx context.Context, c *coord.Coordinator, actor coord.Actor) (int64, error) {
-	id, err := c.ResolveTask(ctx, actor, a.task)
-	if err != nil {
-		return 0, errors.New("specify --task (or run inside a managed session)")
+	if id, err := c.ResolveTask(ctx, actor, a.task); err == nil {
+		return id, nil
 	}
-	return id, nil
+	// The user without --task: the most recently updated open task.
+	ts, err := c.ListTasks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	var best coord.Task
+	for _, t := range ts {
+		if (t.Status == "queued" || t.Status == "active" || t.Status == "blocked") && t.UpdatedAt > best.UpdatedAt {
+			best = t
+		}
+	}
+	if best.ID == 0 {
+		return 0, errors.New("no open task; specify --task")
+	}
+	return best.ID, nil
 }
 
 func (a *app) taskFlag(cmd *cobra.Command) {

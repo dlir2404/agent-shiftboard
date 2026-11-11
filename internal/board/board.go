@@ -6,6 +6,7 @@ package board
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -210,8 +211,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateInput(msg)
 		}
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			return m, tea.Quit
+		case "q":
+			if os.Getenv("TMUX_PANE") == "" {
+				return m, tea.Quit
+			}
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -399,7 +404,7 @@ func (m model) View() string {
 	if m.msg != "" {
 		fmt.Fprintf(&b, "\n%s\n", m.msg)
 	}
-	fmt.Fprintf(&b, "\n%s\n", dim.Render("↑↓ select · t next task · q quit · updated "+s.at.Format("15:04:05")))
+	fmt.Fprintf(&b, "\n%s\n", dim.Render("click here, then ↑↓ select · t next task · updated "+s.at.Format("15:04:05")))
 	return b.String()
 }
 

@@ -19,7 +19,7 @@ cd your-project
 agent-shiftboard
 ```
 
-The first run initializes `.agent-shiftboard/` (add it to `.gitignore`) and opens a tmux workspace: Claude Code as the lead on the left, the status board on the right. Just talk to the lead; it names the task and records rules, approvals, and side effects as you work. Running `agent-shiftboard` again continues where you left off. When the CLI exits, the pane offers resume, a new task, or switching tasks. Without tmux, the lead runs in the current terminal and `agent-shiftboard board` shows the board in another terminal.
+The first run initializes `.agent-shiftboard/` (add it to `.gitignore`) and opens a tmux workspace: Claude Code as the lead on the left, the status board on the right. Just talk to the lead; it names the task and records rules, approvals, and side effects as you work. Click a pane to focus it; `Ctrl+Q` leaves the workspace while sessions keep running, and running `agent-shiftboard` again continues where you left off. The workspace uses its own tmux server and config, so your tmux setup is untouched. When the CLI exits, the pane offers resume, a new task, or switching tasks. Without tmux, the lead runs in the current terminal and `agent-shiftboard board` shows the board in another terminal.
 
 ## Product invariants
 

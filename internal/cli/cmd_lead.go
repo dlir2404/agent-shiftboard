@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -282,7 +283,13 @@ func attach(ws tmux.Workspace) error {
 	if os.Getenv(coord.SessionEnv) != "" {
 		return errors.New("refusing to attach from inside a managed agent session")
 	}
-	return syscall.Exec(bin, args, os.Environ())
+	var env []string
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "TMUX=") {
+			env = append(env, e)
+		}
+	}
+	return syscall.Exec(bin, args, env)
 }
 
 func mustOut(s string, err error) string {

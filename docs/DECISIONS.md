@@ -96,6 +96,8 @@ These decisions define AgentShiftboard's product boundaries and explain the main
 - Where the CLI supports it, AgentShiftboard assigns the native session ID at launch (for example `claude --session-id <uuid>`) instead of discovering it afterwards.
 - AgentShiftboard never sends keystrokes into a pane whose status is `waiting_for_approval`. Startup prompts are passed as CLI arguments or a referenced handoff file, not typed in.
 
+**Amendment (2026-11-11):** the workspace runs on AgentShiftboard's own tmux server (`tmux -L agent-shiftboard`) with a generated config (`~/.config/agent-shiftboard/tmux.conf`): mouse on to focus panes, `Ctrl+Q` to leave (sessions keep running), keys shown in the status line. The user's own tmux server, sessions, and `~/.tmux.conf` are never touched. Agent Deck, by contrast, shares the default server and appends to `~/.tmux.conf`. From inside the user's own tmux, attaching is a nested attach.
+
 **Why:** In headless mode Claude Code has no interactive permission prompt and loses slash commands and skills, so the lead would no longer be the CLI the user relies on. Keeping the native CLI also keeps each provider's approval controls authoritative. The cost is less structured failure detection for the lead; classifiers must fall back to `unknown` when unsure.
 
 ## D-15 — One fixed workspace window; the lead pane is swapped on handoff after confirmation
