@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -769,15 +770,16 @@ func runAction(open Opener, fn func(ctx context.Context, c *coord.Coordinator) e
 }
 
 var (
-	title   = lipgloss.NewStyle().Bold(true)
-	dim     = lipgloss.NewStyle().Faint(true)
-	warn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	bad     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	good    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	accent  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	cursor  = lipgloss.NewStyle().Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255")).Bold(true)
-	keyHint = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
-	header  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	title        = lipgloss.NewStyle().Bold(true)
+	dim          = lipgloss.NewStyle().Faint(true)
+	warn         = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	bad          = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	good         = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	accent       = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	cursor       = lipgloss.NewStyle().Background(lipgloss.Color("238")).Foreground(lipgloss.Color("255")).Bold(true)
+	keyHint      = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
+	header       = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
+	sectionTitle = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Bold(true)
 )
 
 func (m model) View() string {
@@ -790,18 +792,26 @@ func (m model) View() string {
 		w, h = 38, 40
 	}
 	// Everything must fit in h lines, or the terminal scrolls the top of
-	// the list away: header, rows, separator, detail (capped), footer.
-	var head []string
-	head = append(head, accent.Render("AgentShiftboard"),
-		good.Render(fmt.Sprintf("● %d running", s.running))+"  "+warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)), "")
+	// the list away: header, session cards, separator, detail, footer.
+	project := ""
+	if s.root != "" {
+		project = dim.Render(" · " + filepath.Base(s.root))
+	}
+	head := []string{
+		" " + accent.Render("AgentShiftboard") + project,
+		" " + good.Render(fmt.Sprintf("● %d running", s.running)) + "   " + warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)),
+		"",
+		" " + sectionTitle.Render("SESSIONS"),
+	}
 	if len(s.items) == 0 {
-		head = append(head, dim.Render("No open sessions."), dim.Render("Press n to start one."))
+		head = append(head, dim.Render(" No open sessions. Press n to start one."))
 	}
 	if m.filter != "" {
-		head = append(head, accent.Render("/"+m.filter)+dim.Render("  esc clears"))
+		head = append(head, " "+accent.Render("/"+m.filter)+dim.Render("  esc clears"))
 	}
 
-	foot := dim.Render("↑↓ · space actions · →/enter open lead\n/ find · n new session")
+	foot := " " + keyHint.Render("space") + dim.Render(" actions  ") + keyHint.Render("⏎") + dim.Render(" open lead") + "\n " +
+		keyHint.Render("n") + dim.Render(" new  ") + keyHint.Render("/") + dim.Render(" find  ") + keyHint.Render("⇧←/⇧→") + dim.Render(" switch pane")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
@@ -810,9 +820,9 @@ func (m model) View() string {
 		if m.input.purpose == "filter" {
 			prompt = "Find"
 		}
-		foot = accent.Render(prompt+": ") + m.input.text + "█"
+		foot = " " + accent.Render(prompt+": ") + m.input.text + "█"
 	} else if m.msg != "" {
-		foot = m.msg
+		foot = " " + m.msg
 	}
 	footLines := strings.Split(lipgloss.NewStyle().Width(w).Render(foot), "\n")
 
@@ -821,35 +831,36 @@ func (m model) View() string {
 		detail = strings.Split(strings.TrimRight(compactDetail(it, w), "\n"), "\n")
 	}
 
+	// Session cards: two lines each (an "older" row is one line). Track
+	// the line where the selected card starts for scrolling.
 	var rows []string
+	selStart, selLen := 0, 0
 	for i, it := range m.visible() {
-		line := rowText(it, w-3)
-		if it.pane != "" && it.pane == s.shown {
-			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
-		}
+		card := cardLines(it, w, it.pane != "" && it.pane == s.shown)
 		if i == m.cursor {
-			line = highlight(line, w)
+			selStart, selLen = len(rows), len(card)
+			for k := range card {
+				card[k] = highlight(card[k], w)
+			}
 		}
-		rows = append(rows, line)
+		rows = append(rows, card...)
 	}
-	// The list gets what it needs (up to two thirds of the space); the
-	// detail uses the rest and is cut with … when it does not fit.
-	free := h - len(head) - 1 - len(footLines)
-	room := min(len(rows), max(3, free*2/3))
+	free := h - len(head) - 2 - len(footLines)
+	room := min(len(rows), max(4, free*3/5))
 	if free-room < len(detail) {
 		keep := max(2, free-room)
 		if keep < len(detail) {
-			detail = append(detail[:keep-1], dim.Render("…"))
+			detail = append(detail[:keep-1], dim.Render(" …"))
 		}
 	}
-	room = max(1, min(len(rows), free-len(detail)))
+	room = max(2, min(len(rows), free-len(detail)))
 	if len(rows) > room {
-		start := min(max(0, m.cursor-room/2), len(rows)-room)
+		start := min(max(0, selStart+selLen-room+1, selStart-room/3), len(rows)-room)
 		rows = rows[start : start+room]
 	}
 	out := append([]string{}, head...)
 	out = append(out, rows...)
-	out = append(out, dim.Render(strings.Repeat("─", w)))
+	out = append(out, "", dim.Render(" "+strings.Repeat("─", max(1, w-2))))
 	out = append(out, detail...)
 	if pad := h - len(out) - len(footLines); pad > 0 {
 		out = append(out, make([]string, pad)...)
@@ -861,6 +872,51 @@ func (m model) View() string {
 	return strings.Join(out, "\n")
 }
 
+// cardLines renders one session as two lines: status and title, then a
+// progress bar, the agents, and what needs the user.
+func cardLines(it item, w int, shown bool) []string {
+	if it.kind != "task" {
+		return []string{" " + rowText(it, w-2)}
+	}
+	icon := dim.Render("·")
+	if it.provider != "" {
+		icon = statusIcon(it.status)
+	}
+	mark := ""
+	if shown {
+		mark = " " + accent.Render("▸")
+	}
+	first := " " + icon + " " + title.Render(it.id) + " " + trunc(it.text, w-5-len([]rune(it.id))-lipgloss.Width(mark)) + mark
+	second := "   " + progressBar(it.progress)
+	if chips := agentChips(it); chips != "" {
+		second += dim.Render(" · ") + chips
+	}
+	if it.needCount > 0 {
+		second += "  " + warn.Render(fmt.Sprintf("◐ %d", it.needCount))
+	}
+	return []string{first, trunc(second, w+60)}
+}
+
+// progressBar draws "▰▰▰▱▱▱ 3/6" from "done/total".
+func progressBar(progress string) string {
+	var done, total int
+	if _, err := fmt.Sscanf(progress, "%d/%d", &done, &total); err != nil || total == 0 {
+		return dim.Render("no checklist yet")
+	}
+	const cells = 6
+	full := done * cells / total
+	return good.Render(strings.Repeat("▰", full)) + dim.Render(strings.Repeat("▱", cells-full)) + " " + dim.Render(progress)
+}
+
+// agentChips is a compact "claude ● codex ○" line.
+func agentChips(it item) string {
+	var out []string
+	for _, a := range it.agentList {
+		out = append(out, dim.Render(a.provider)+" "+statusIcon(a.status))
+	}
+	return strings.Join(out, " ")
+}
+
 // compactDetail is a short description of the selected row for the
 // narrow list; the session itself is shown on the right.
 func compactDetail(it item, w int) string {
@@ -869,22 +925,47 @@ func compactDetail(it item, w int) string {
 	switch it.kind {
 	case "task":
 		f := it.brief.Fields
-		if it.agents != "" {
-			b.WriteString(wrap.Render(title.Render("Agents: ")+it.agents) + "\n")
+		pad := lipgloss.NewStyle().Width(w - 3)
+		indent := func(text string) string {
+			lines := strings.Split(pad.Render(text), "\n")
+			for k := range lines {
+				lines[k] = "   " + lines[k]
+			}
+			return strings.Join(lines, "\n")
 		}
+		b.WriteString(" " + title.Render(trunc(it.id+" "+it.text, w-2)) + "\n")
 		if it.reason != "" {
-			b.WriteString(wrap.Render(warn.Render("Lead: "+it.reason)) + "\n")
-		}
-		if it.needCount > 0 {
-			b.WriteString(warn.Render(fmt.Sprintf("%d thing(s) need you", it.needCount)) + "\n")
+			b.WriteString(" " + warn.Render(trunc("lead "+it.reason, w-2)) + "\n")
 		}
 		if f.NextAction != "" {
-			next := strings.Split(wrap.Render(title.Render("Next: ")+f.NextAction), "\n")
+			b.WriteString(" " + sectionTitle.Render("NEXT") + "\n")
+			next := strings.Split(indent(f.NextAction), "\n")
 			if len(next) > 3 {
-				next = append(next[:2], dim.Render("…"))
+				next = append(next[:2], "   "+dim.Render("…"))
 			}
 			b.WriteString(strings.Join(next, "\n") + "\n")
 		}
+		if len(it.agentList) > 0 {
+			b.WriteString(" " + sectionTitle.Render("AGENTS") + "\n")
+			for _, a := range it.agentList {
+				state := a.status
+				if a.reason != "" {
+					state = a.reason
+				}
+				label := a.provider + " " + a.role
+				if a.assignment != nil {
+					label += " " + a.assignment.ID
+				}
+				b.WriteString("   " + statusIcon(a.status) + " " + trunc(fmt.Sprintf("%-18s", label), 18) + " " + dim.Render(trunc(state, w-26)) + "\n")
+			}
+		}
+		b.WriteString(" " + sectionTitle.Render("NEEDS YOU") + "\n")
+		if it.needCount > 0 {
+			b.WriteString("   " + warn.Render(fmt.Sprintf("%d thing(s) · space to see", it.needCount)) + "\n")
+		} else {
+			b.WriteString("   " + dim.Render("nothing") + "\n")
+		}
+		return b.String()
 	case "session":
 		st := it.status
 		if it.reason != "" {
