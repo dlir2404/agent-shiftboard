@@ -469,6 +469,9 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 			}
 			touched = append(touched, p.task)
 		}
+		if _, err := tx.Exec(`UPDATE sessions SET pane_id='',pid=0 WHERE status IN ('stopped','failed') AND (pane_id!='' OR pid!=0)`); err != nil {
+			return err
+		}
 		_, err = tx.Exec(`UPDATE pending SET status='expired',resolved_at=? WHERE status='pending' AND expires_at!='' AND expires_at<?`, c.now(), c.now())
 		return err
 	})

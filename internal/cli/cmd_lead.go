@@ -104,7 +104,7 @@ func (a *app) openLead(ctx context.Context, c *coord.Coordinator, ws tmux.Worksp
 		return "", err
 	}
 	if mode != "new" {
-		if pane := leadPane(ctx, c, t); pane != "" {
+		if pane := liveLeadPane(ctx, c, t); pane != "" && pane != os.Getenv("TMUX_PANE") {
 			if alive, _ := ws.PaneAlive(pane); alive {
 				if show {
 					return pane, ws.Show(pane)
@@ -206,4 +206,15 @@ func mustOut(s string, err error) string {
 		return ""
 	}
 	return s
+}
+
+// liveLeadPane returns the lead's pane only while the lead session runs.
+func liveLeadPane(ctx context.Context, c *coord.Coordinator, t coord.Task) string {
+	ss, _ := c.ListSessions(ctx, t.ID)
+	for _, s := range ss {
+		if s.ID == t.LeadSession && s.Status != "stopped" && s.Status != "failed" {
+			return s.PaneID
+		}
+	}
+	return ""
 }
