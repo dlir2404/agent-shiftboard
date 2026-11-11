@@ -767,10 +767,6 @@ func (m model) View() string {
 	if it, ok := m.selected(); ok {
 		detail = strings.Split(strings.TrimRight(compactDetail(it, w), "\n"), "\n")
 	}
-	maxDetail := max(3, h/3)
-	if len(detail) > maxDetail {
-		detail = append(detail[:maxDetail-1], dim.Render("…"))
-	}
 
 	var rows []string
 	for i, it := range m.visible() {
@@ -783,13 +779,17 @@ func (m model) View() string {
 		}
 		rows = append(rows, line)
 	}
-	room := h - len(head) - 1 - len(detail) - len(footLines)
-	if room < 3 {
-		// Small terminal: give the list priority over the detail.
-		cut := min(len(detail), 3-room)
-		detail = detail[:len(detail)-cut]
-		room = max(1, h-len(head)-1-len(detail)-len(footLines))
+	// The list gets what it needs (up to two thirds of the space); the
+	// detail uses the rest and is cut with … when it does not fit.
+	free := h - len(head) - 1 - len(footLines)
+	room := min(len(rows), max(3, free*2/3))
+	if free-room < len(detail) {
+		keep := max(2, free-room)
+		if keep < len(detail) {
+			detail = append(detail[:keep-1], dim.Render("…"))
+		}
 	}
+	room = max(1, min(len(rows), free-len(detail)))
 	if len(rows) > room {
 		start := min(max(0, m.cursor-room/2), len(rows)-room)
 		rows = rows[start : start+room]
