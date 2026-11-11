@@ -108,3 +108,48 @@ assignment, the rules in force, and the brief, and reports back with
 	cmd.AddCommand(start)
 	return cmd
 }
+
+// resumeWorker resumes a worker whose CLI exited, in a new window shown on
+// the right of the workspace.
+func (a *app) resumeWorker(ctx context.Context, ws tmux.Workspace, sid string) error {
+	c, err := a.open(ctx)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	taskID, err := c.ResolveTask(ctx, coord.Actor{SessionID: sid}, 0)
+	if err != nil {
+		return err
+	}
+	var s coord.Session
+	ss, _ := c.ListSessions(ctx, taskID)
+	for _, x := range ss {
+		if x.ID == sid {
+			s = x
+		}
+	}
+	p, err := adapter.Get(s.Provider)
+	if err != nil {
+		return err
+	}
+	if s.NativeSessionID == "" {
+		return fmt.Errorf("the %s worker never reported its session ID, so it cannot be resumed; ask the lead to start a new worker", s.Provider)
+	}
+	spec := a.launchSpec(c, sid, s.NativeSessionID, s.Provider)
+	spec.Role = "worker"
+	spec.LaunchContext = filepath.Join(sessionDir(c.Root, sid), "launch.md")
+	command, err := p.Resume(spec)
+	if err != nil {
+		return err
+	}
+	script, err := adapter.WriteScript(spec.SessionDir, "resume.sh", command)
+	if err != nil {
+		return err
+	}
+	pane, err := ws.OpenWindow("worker "+sid[:8], spec.Env(), []string{"/bin/sh", script}, true)
+	if err != nil {
+		return err
+	}
+	pid, _ := strconv.Atoi(mustOut(ws.R.Run("display-message", "-p", "-t", pane, "#{pane_pid}")))
+	return c.SetSessionRuntime(ctx, sid, pane, pid, "")
+}

@@ -35,7 +35,7 @@ func TestEnsureBuildsLayoutWithoutSessionEnv(t *testing.T) {
 	for _, c := range f.calls {
 		joined += strings.Join(c, " ") + "\n"
 	}
-	for _, want := range []string{"new-session -d -s asb-proj-abc123 -n home", "/bin/agent-shiftboard board", "-u AGENT_SHIFTBOARD_SESSION_ID"} {
+	for _, want := range []string{"new-session -d -s asb-proj-abc123 -n main", "split-window -h -d", "/bin/agent-shiftboard board", "-u AGENT_SHIFTBOARD_SESSION_ID"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %q in:\n%s", want, joined)
 		}

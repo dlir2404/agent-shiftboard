@@ -51,15 +51,15 @@ set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
 set -g status-left " AgentShiftboard · #W "
 set -g status-left-length 60
-set -g status-right " #{?#{==:#{window_name},home},↑↓ move · → open · q leave,Shift+← or Ctrl+Q: back to the session list} "
-set -g status-right-length 80
+set -g status-right " Shift+← list · Shift+→ session · Ctrl+Q leave (sessions keep running) "
+set -g status-right-length 90
 set -g window-status-format ""
 set -g window-status-current-format ""
 set -g pane-active-border-style "fg=colour39"
-# Ctrl+Q: from a session, back to the session list; from the list, leave.
-bind -n C-q if-shell -F "#{==:#{window_name},home}" "detach-client" "select-window -t :home"
-# Shift+Left: back to the session list (plain Left stays with the CLI's prompt).
-bind -n S-Left if-shell -F "#{==:#{window_name},home}" "send-keys S-Left" "select-window -t :home"
+# The list is the left pane of the main window; the shown session is the right pane.
+bind -n S-Left select-window -t :main \; select-pane -t :main.0
+bind -n S-Right select-window -t :main \; select-pane -t :main.1
+bind -n C-q detach-client
 `
 
 // WriteConfig writes Config to path and makes the server use it.
@@ -128,10 +128,15 @@ func (w Workspace) Exists() bool {
 	return err == nil
 }
 
-// Ensure creates the session if it does not exist. Its first window,
-// "home", runs the AgentShiftboard session list; every agent session gets a
-// window of its own. The agent session variable is never set in the
-// session's global environment. It reports whether the session was created.
+// ListWidth is the width of the session list on the left.
+const ListWidth = 38
+
+// Ensure creates the session if it does not exist: the "main" window holds
+// the session list on the left (pane 0) and the shown session on the right
+// (pane 1); every agent session lives in its own hidden window and is
+// swapped into the right pane to be shown. The agent session variable is
+// never set in the session's global environment. It reports whether the
+// session was created.
 func (w Workspace) Ensure() (bool, error) {
 	if w.Exists() {
 		if ConfigPath != "" {
@@ -139,40 +144,68 @@ func (w Workspace) Ensure() (bool, error) {
 		}
 		return false, nil
 	}
-	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "home", "-c", w.Root, "-x", "220", "-y", "60",
+	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "main", "-c", w.Root, "-x", "220", "-y", "60",
 		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, shellQuote(w.Self)+" board"); err != nil {
 		return false, err
 	}
 	_, _ = w.R.Run("set-environment", "-t", w.Session, "-u", "AGENT_SHIFTBOARD_SESSION_ID")
-	return true, nil
+	placeholder := "printf '\\n  Pick a session on the left (↑↓, then → or Enter).\\n  Press n there for a new task.\\n'; exec tail -f /dev/null"
+	if _, err := w.R.Run("split-window", "-h", "-d", "-t", w.Session+":main", "-c", w.Root, placeholder); err != nil {
+		return true, err
+	}
+	_, _ = w.R.Run("resize-pane", "-t", w.Session+":main.0", "-x", fmt.Sprint(ListWidth))
+	_, err := w.R.Run("select-pane", "-t", w.Session+":main.0")
+	return true, err
 }
 
-// OpenWindow starts command in a new window and returns its pane ID. With
-// show, the window becomes the current one.
+// OpenWindow starts command in a new hidden window and returns its pane
+// ID. With show, the pane is shown on the right of the main window.
 func (w Workspace) OpenWindow(name string, env map[string]string, command []string, show bool) (string, error) {
-	args := []string{"new-window", "-P", "-F", "#{pane_id}", "-t", w.Session + ":", "-n", name, "-c", w.Root}
-	if !show {
-		args = append(args, "-d")
-	}
+	args := []string{"new-window", "-d", "-P", "-F", "#{pane_id}", "-t", w.Session + ":", "-n", name, "-c", w.Root}
 	for _, k := range sortedKeys(env) {
 		args = append(args, "-e", k+"="+env[k])
 	}
 	pane, err := w.R.Run(append(args, joinCommand(command))...)
-	if err == nil {
-		_ = w.KeepOnExit(pane)
+	if err != nil {
+		return "", err
 	}
-	return pane, err
+	_ = w.KeepOnExit(pane)
+	if show {
+		return pane, w.Show(pane)
+	}
+	return pane, nil
 }
 
-// Show makes the window that holds pane the current one.
+// Shown returns the pane on the right of the main window.
+func (w Workspace) Shown() (string, error) {
+	return w.R.Run("display-message", "-p", "-t", w.Session+":main.1", "#{pane_id}")
+}
+
+// Show puts pane on the right of the main window (the pane that was there
+// goes back to pane's window and keeps running) and gives it the keyboard.
 func (w Workspace) Show(pane string) error {
-	_, err := w.R.Run("select-window", "-t", pane)
+	list, _ := w.R.Run("display-message", "-p", "-t", w.Session+":main.0", "#{pane_id}")
+	if pane == list {
+		return w.Home()
+	}
+	if cur, err := w.Shown(); err != nil || cur != pane {
+		if _, err := w.R.Run("swap-pane", "-d", "-s", pane, "-t", w.Session+":main.1"); err != nil {
+			return err
+		}
+	}
+	if _, err := w.R.Run("select-window", "-t", w.Session+":main"); err != nil {
+		return err
+	}
+	_, err := w.R.Run("select-pane", "-t", w.Session+":main.1")
 	return err
 }
 
-// Home shows the session list.
+// Home focuses the session list.
 func (w Workspace) Home() error {
-	_, err := w.R.Run("select-window", "-t", w.Session+":home")
+	if _, err := w.R.Run("select-window", "-t", w.Session+":main"); err != nil {
+		return err
+	}
+	_, err := w.R.Run("select-pane", "-t", w.Session+":main.0")
 	return err
 }
 

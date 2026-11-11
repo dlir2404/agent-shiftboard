@@ -32,6 +32,8 @@ func (a *app) boardCmd() *cobra.Command {
 					_, _ = ws.R.Run("source-file", tmux.ConfigPath) // keys from an upgrade
 				}
 				board.Focus = ws.Show
+				board.Shown = func() string { p, _ := ws.Shown(); return p }
+				board.OpenWorker = func(sid string) error { return a.resumeWorker(context.Background(), ws, sid) }
 				board.Capture = func(pane string, lines int) string { return mustOut(ws.Capture(pane, lines)) }
 				board.Leave = func() { _, _ = ws.R.Run("detach-client") }
 				board.OpenLead = func(taskID int64, mode, provider string) error {

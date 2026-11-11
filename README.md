@@ -19,7 +19,7 @@ cd your-project
 agent-shiftboard
 ```
 
-The first run initializes `.agent-shiftboard/` (add it to `.gitignore`) and opens straight into Claude Code as the lead of a new task: just talk to it. Later runs open the session list: open tasks with their lead and worker sessions, what needs you, and a live preview. `↑↓` and `Enter` open a session full screen, `Ctrl+Q` returns to the list, `n` starts a new task, `s` switches a task's lead to another CLI, and `q` leaves (sessions keep running). The workspace uses its own tmux server and config, so your tmux setup is untouched.
+The first run initializes `.agent-shiftboard/` (add it to `.gitignore`) and opens straight into Claude Code as the lead of a new task: just talk to it. Later runs open the workspace with the session list on the left (open tasks, their lead and worker sessions, what needs you) and the selected session on the right. `↑↓` then `→` or `Enter` shows a session on the right and moves the keyboard there; `Shift+←` / `Shift+→` move between the list and the session; `n` starts a new task, `s` switches a task's lead to another CLI; `Ctrl+Q` leaves (sessions keep running). The workspace uses its own tmux server and config, so your tmux setup is untouched.
 
 ## Product invariants
 

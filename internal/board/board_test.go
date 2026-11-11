@@ -33,7 +33,7 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	}
 	c.Close()
 
-	m := model{open: open, width: 120, height: 40}
+	m := model{open: open, width: 38, height: 40}
 	m.snap = loadSnapshot(open)
 	kinds := []string{}
 	for _, it := range m.snap.items {
@@ -44,7 +44,7 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	}
 	m.cursor = 2 // the approval
 	v := m.View()
-	for _, want := range []string{"SESSIONS", "PREVIEW", "#1", "claude", "lead", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
+	for _, want := range []string{"AgentShiftboard", "#1", "claude", "lead", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}

@@ -39,6 +39,10 @@ var (
 	Capture func(pane string, lines int) string
 	// Providers lists the CLIs a lead can be switched to.
 	Providers []string
+	// OpenWorker resumes a worker session whose CLI exited.
+	OpenWorker func(sessionID string) error
+	// Shown returns the pane on the right of the workspace.
+	Shown func() string
 )
 
 // Run starts the board. It refuses to run inside a managed agent session,
@@ -82,6 +86,7 @@ type item struct {
 }
 
 type snapshot struct {
+	shown   string
 	items   []item
 	root    string
 	running int
@@ -135,6 +140,9 @@ func loadSnapshot(open Opener) snapshot {
 	}
 	defer c.Close()
 	s.root = c.Root
+	if Shown != nil {
+		s.shown = Shown()
+	}
 	if Refresh != nil {
 		Refresh(ctx, c)
 	}
@@ -189,7 +197,7 @@ func loadSnapshot(open Opener) snapshot {
 				it.keys = "→/enter resume"
 			}
 			if Capture != nil && it.pane != "" {
-				it.output = Capture(it.pane, 60)
+				it.output = Capture(it.pane, 40)
 				if p := nativePrompt(it.output); p != "" {
 					it.status, it.reason = "waiting_for_approval", p
 					it.keys = "enter open and answer it"
@@ -379,6 +387,15 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 		if strings.HasPrefix(it.role, "lead") {
 			return m, openLead(it.task.ID, "auto", "")
 		}
+		if OpenWorker != nil {
+			id := it.id
+			return m, func() tea.Msg {
+				if err := OpenWorker(id); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{msg: ""}
+			}
+		}
 		m.msg = "this session has no window"
 	case key == "s" && (it.kind == "task" || strings.HasPrefix(it.role, "lead")):
 		m.input = &input{purpose: "provider", taskID: it.task.ID}
@@ -496,77 +513,101 @@ func (m model) View() string {
 	}
 	w, h := m.width, m.height
 	if w == 0 {
-		w, h = 100, 30
+		w, h = 38, 40
 	}
-	top := fmt.Sprintf("%s  %s  %s  %s", accent.Render("AgentShiftboard"), dim.Render(trunc(s.root, 50)),
-		good.Render(fmt.Sprintf("● %d running", s.running)), warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)))
-	leftW := max(30, w*42/100)
-	rightW := max(20, w-leftW-3)
-	bodyH := max(5, h-4)
-
-	// Left: tasks, sessions, needs-you rows.
-	var left []string
-	left = append(left, header.Render("SESSIONS"))
+	var b strings.Builder
+	b.WriteString(accent.Render("AgentShiftboard") + "\n")
+	b.WriteString(good.Render(fmt.Sprintf("● %d running", s.running)) + "  " + warn.Render(fmt.Sprintf("◐ %d need you", s.waiting)) + "\n\n")
 	if len(s.items) == 0 {
-		left = append(left, dim.Render("No open tasks. Press n to start one."))
+		b.WriteString(dim.Render("No open tasks.\nPress n to start one.") + "\n")
 	}
+	var rows []string
 	for i, it := range s.items {
-		line := rowText(it, leftW-2)
-		if i == m.cursor {
-			line = cursor.Render(padRight("▶ "+stripLead(line), leftW))
+		line := rowText(it, w-3)
+		if it.pane != "" && it.pane == s.shown {
+			line = strings.TrimRight(line, " ") + " " + accent.Render("▸")
 		}
-		left = append(left, line)
+		if i == m.cursor {
+			line = cursor.Render(padRight("▶"+strings.TrimPrefix(line, " "), w))
+		}
+		rows = append(rows, line)
 	}
-	if len(left) > bodyH {
-		start := min(max(0, m.cursor-bodyH/2), len(left)-bodyH)
-		left = left[start : start+bodyH]
-	}
-
-	// Right: preview of the selected row.
-	right := header.Render("PREVIEW") + "\n"
+	detail := ""
 	if it, ok := m.selected(); ok {
-		right += preview(it, rightW, bodyH-1)
+		detail = compactDetail(it, w)
 	}
-
-	l := lipgloss.NewStyle().Width(leftW).Height(bodyH).Render(strings.Join(left, "\n"))
-	r := lipgloss.NewStyle().Width(rightW).Height(bodyH).MaxHeight(bodyH).Render(right)
-	sep := dim.Render(strings.Repeat("│\n", bodyH))
-	body := lipgloss.JoinHorizontal(lipgloss.Top, l, " ", sep, " ", r)
-
-	foot := dim.Render("↑↓ move · →/enter open · n new task · s switch lead CLI · q leave")
-	if it, ok := m.selected(); ok && it.keys != "" {
-		foot = keyHint.Render(it.keys) + dim.Render("   ↑↓ move · n new task · q leave")
+	room := max(4, h-4-strings.Count(detail, "\n")-3)
+	if len(rows) > room {
+		start := min(max(0, m.cursor-room/2), len(rows)-room)
+		rows = rows[start : start+room]
 	}
+	b.WriteString(strings.Join(rows, "\n") + "\n")
+	b.WriteString(dim.Render(strings.Repeat("─", w)) + "\n")
+	b.WriteString(detail)
+	foot := dim.Render("↑↓ · →/enter open · n new task · s switch lead")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
-			prompt = "Switch the lead of task #" + fmt.Sprint(m.input.taskID) + " to (" + strings.Join(Providers, ", ") + ")"
+			prompt = "New lead CLI (" + strings.Join(Providers, ", ") + ")"
 		}
-		foot = accent.Render(prompt+": ") + m.input.text + "█" + dim.Render("  enter ok · esc cancel")
+		foot = accent.Render(prompt+": ") + m.input.text + "█"
 	} else if m.msg != "" {
 		foot = m.msg
 	}
-	return top + "\n\n" + body + "\n" + foot
+	return b.String() + "\n" + lipgloss.NewStyle().Width(w).Render(foot)
+}
+
+// compactDetail is a short description of the selected row for the
+// narrow list; the session itself is shown on the right.
+func compactDetail(it item, w int) string {
+	wrap := lipgloss.NewStyle().Width(w)
+	var b strings.Builder
+	switch it.kind {
+	case "task":
+		f := it.brief.Fields
+		b.WriteString(wrap.Render(fmt.Sprintf("%s · lead %s · brief r%d", it.task.Status, leaseStyle(it.task.LeaseState), it.task.BriefRevision)) + "\n")
+		if f.NextAction != "" {
+			b.WriteString(wrap.Render(title.Render("Next: ")+f.NextAction) + "\n")
+		}
+		for _, x := range f.Blockers {
+			b.WriteString(wrap.Render(warn.Render("Blocked: ")+x) + "\n")
+		}
+	case "session":
+		st := it.status
+		if it.reason != "" {
+			st += " · " + it.reason
+		}
+		b.WriteString(wrap.Render(fmt.Sprintf("%s %s: %s %s", it.provider, it.role, st, dim.Render(ago(it.observed)))) + "\n")
+		if a := it.assignment; a != nil {
+			b.WriteString(wrap.Render(title.Render("Task: ")+a.Scope) + "\n")
+			if a.Result != "" {
+				b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
+			}
+		}
+	default:
+		b.WriteString(wrap.Render(it.text) + "\n")
+	}
+	if it.keys != "" {
+		b.WriteString(keyHint.Render(wrap.Render(it.keys)) + "\n")
+	}
+	return b.String()
 }
 
 func rowText(it item, w int) string {
-	indent := strings.Repeat("  ", it.depth)
+	indent := strings.Repeat(" ", 1+it.depth*2)
 	switch it.kind {
 	case "task":
-		t := it.task
-		return trunc(fmt.Sprintf("%s %s %s", title.Render(it.id), it.text, dim.Render("· "+t.Status)), w+30)
+		return " " + trunc(title.Render(it.id)+" "+it.text, w+20)
 	case "session":
-		state := it.status
+		label := it.provider + " " + it.role
 		if it.assignment != nil && it.assignment.Status == "submitted" {
-			state = good.Render("✓ result submitted")
+			label += " " + good.Render("✓")
 		} else if it.reason != "" && it.status == "waiting_for_approval" {
-			state = warn.Render(it.reason)
-		} else {
-			state = dim.Render(state)
+			label += " " + warn.Render("needs you")
 		}
-		return indent + trunc(fmt.Sprintf("%s %-7s %s %s", statusIcon(it.status), it.provider, it.role, state), w+30)
+		return indent + statusIcon(it.status) + " " + trunc(label, w-len(indent)+20)
 	default:
-		return indent + warn.Render("! ") + trunc(fmt.Sprintf("%s %s %s", it.kind, it.id, it.text), w-len(indent)-2)
+		return indent + warn.Render("!") + " " + trunc(it.kind+" "+it.id+" "+it.text, w-len(indent)-2)
 	}
 }
 
@@ -591,71 +632,6 @@ func statusIcon(st string) string {
 		return bad.Render("✕")
 	}
 	return dim.Render("·")
-}
-
-func preview(it item, w, h int) string {
-	var b strings.Builder
-	wrap := lipgloss.NewStyle().Width(w)
-	switch it.kind {
-	case "task":
-		t, f := it.task, it.brief.Fields
-		fmt.Fprintf(&b, "%s %s\n", title.Render(it.id), it.text)
-		fmt.Fprintf(&b, "%s · lead %s · brief r%d\n\n", t.Status, leaseStyle(t.LeaseState), t.BriefRevision)
-		if f.Goal != "" {
-			b.WriteString(wrap.Render(title.Render("Goal: ")+f.Goal) + "\n")
-		}
-		if f.NextAction != "" {
-			b.WriteString(wrap.Render(title.Render("Next: ")+f.NextAction) + "\n")
-		}
-		for _, x := range f.Blockers {
-			b.WriteString(wrap.Render(warn.Render("Blocked: ")+x) + "\n")
-		}
-		if len(f.Completed) > 0 {
-			b.WriteString("\n" + title.Render("Done") + "\n")
-			for _, x := range lastN(f.Completed, 5) {
-				b.WriteString(wrap.Render("• "+x) + "\n")
-			}
-		}
-		if len(f.Decisions) > 0 {
-			b.WriteString("\n" + title.Render("Decisions") + "\n")
-			for _, x := range lastN(f.Decisions, 5) {
-				b.WriteString(wrap.Render("• "+x) + "\n")
-			}
-		}
-	case "session":
-		fmt.Fprintf(&b, "%s %s · task %s\n", title.Render(it.provider), it.role, fmt.Sprintf("#%d", it.task.ID))
-		fmt.Fprintf(&b, "Status: %s %s %s\n", statusIcon(it.status), it.status, dim.Render(it.reason+" "+ago(it.observed)))
-		if a := it.assignment; a != nil {
-			b.WriteString(wrap.Render(title.Render("Assignment: ")+a.Scope) + "\n")
-			if a.Result != "" {
-				b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
-			}
-		}
-		b.WriteString("\n" + header.Render("Output") + "\n")
-		out := strings.TrimRight(it.output, "\n ")
-		lines := strings.Split(out, "\n")
-		room := max(3, h-strings.Count(b.String(), "\n")-1)
-		if len(lines) > room {
-			lines = lines[len(lines)-room:]
-		}
-		for _, l := range lines {
-			b.WriteString(trunc(l, w) + "\n")
-		}
-	default:
-		fmt.Fprintf(&b, "%s %s\n\n", title.Render(it.kind), it.id)
-		b.WriteString(wrap.Render(it.text) + "\n")
-		if it.keys != "" {
-			b.WriteString("\n" + keyHint.Render(it.keys) + "\n")
-		}
-	}
-	return b.String()
-}
-
-func lastN(xs []string, n int) []string {
-	if len(xs) > n {
-		return xs[len(xs)-n:]
-	}
-	return xs
 }
 
 func statusStyle(s string) string {
