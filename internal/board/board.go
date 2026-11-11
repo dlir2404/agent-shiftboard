@@ -24,6 +24,13 @@ type Opener func(ctx context.Context) (*coord.Coordinator, error)
 // Refresh runs on every board refresh, e.g. to reconcile tmux panes.
 var Refresh func(ctx context.Context, c *coord.Coordinator)
 
+// Focus shows a session's pane in the main slot and gives it the keyboard;
+// MainPane reports which pane is in the main slot. Set by the workspace.
+var (
+	Focus    func(pane string) error
+	MainPane func() string
+)
+
 // Run starts the board. It refuses to run inside a managed agent session,
 // because the board performs user operations.
 func Run(open Opener, taskID int64) error {
@@ -49,11 +56,13 @@ func Run(open Opener, taskID int64) error {
 
 // item is one thing on the board that needs the user.
 type item struct {
-	kind  string // approval | question | rule | delegation | review | effect | lock | stale
+	kind  string // session | approval | question | rule | delegation | review | effect | lock | stale
 	id    string
 	text  string
 	keys  string // available actions
 	scope string
+	// session rows
+	pane, provider, role, status, reason, observed string
 }
 
 type snapshot struct {
@@ -61,7 +70,9 @@ type snapshot struct {
 	task     coord.Task
 	brief    coord.Brief
 	sessions []coord.Session
-	items    []item
+	items    []item // sessions first, then what needs the user
+	nSess    int
+	mainPane string
 	err      error
 	at       time.Time
 }
@@ -134,7 +145,34 @@ func loadSnapshot(open Opener, taskID int64) snapshot {
 	}
 	s.brief, _ = c.GetBrief(ctx, taskID)
 	s.sessions, _ = c.ListSessions(ctx, taskID)
-	s.items = needsYou(ctx, c, taskID)
+	if MainPane != nil {
+		s.mainPane = MainPane()
+	}
+	for _, ss := range s.sessions {
+		if (ss.Status == "stopped" || ss.Status == "failed") && ss.ID != s.task.LeadSession {
+			continue
+		}
+		role := ss.Role
+		switch ss.ID {
+		case s.task.LeadSession:
+			role = "lead"
+		case s.task.PendingLead:
+			role = "lead (new)"
+		}
+		keys := "enter open"
+		if ss.PaneID == "" {
+			keys = ""
+		}
+		it := item{kind: "session", id: ss.ID, pane: ss.PaneID, provider: ss.Provider, role: role,
+			status: ss.Status, reason: ss.Reason, observed: ss.ObservedAt, keys: keys}
+		if role == "lead" {
+			s.items = append([]item{it}, s.items...)
+		} else {
+			s.items = append(s.items, it)
+		}
+	}
+	s.nSess = len(s.items)
+	s.items = append(s.items, needsYou(ctx, c, taskID)...)
 	return s
 }
 
@@ -257,6 +295,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.load()
 		default:
 			if it, ok := m.selected(); ok {
+				if it.kind == "session" && msg.String() == "enter" {
+					if Focus == nil || it.pane == "" {
+						m.msg = "this session has no pane in the workspace"
+						return m, nil
+					}
+					pane := it.pane
+					return m, func() tea.Msg {
+						if err := Focus(pane); err != nil {
+							return actionMsg{msg: "error: " + err.Error()}
+						}
+						return actionMsg{msg: "showing " + it.provider + " " + it.role + " · F2 returns here"}
+					}
+				}
 				if it.kind == "question" && msg.String() == "enter" {
 					m.input = &answerInput{id: it.id}
 					return m, nil
@@ -359,12 +410,13 @@ func nextTask(ts []coord.Task, cur int64) int64 {
 }
 
 var (
-	title  = lipgloss.NewStyle().Bold(true)
-	dim    = lipgloss.NewStyle().Faint(true)
-	warn   = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	bad    = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
-	good   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	cursor = lipgloss.NewStyle().Reverse(true)
+	title   = lipgloss.NewStyle().Bold(true)
+	dim     = lipgloss.NewStyle().Faint(true)
+	warn    = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	bad     = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)
+	good    = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	cursor  = lipgloss.NewStyle().Reverse(true).Bold(true)
+	keyHint = lipgloss.NewStyle().Foreground(lipgloss.Color("39"))
 )
 
 func (m model) View() string {
@@ -379,29 +431,6 @@ func (m model) View() string {
 	fmt.Fprintf(&b, "%s\n", title.Render(fmt.Sprintf("Task #%d %s", s.task.ID, trunc(s.task.Title, max(10, m.width-10)))))
 	fmt.Fprintf(&b, "%s · lease %s · brief r%d\n\n", s.task.Status, leaseStyle(s.task.LeaseState), s.task.BriefRevision)
 
-	for _, ss := range s.sessions {
-		if ss.Status == "stopped" && ss.ID != s.task.LeadSession {
-			continue
-		}
-		role := ss.Role
-		switch ss.ID {
-		case s.task.LeadSession:
-			role = "lead"
-		case s.task.PendingLead:
-			role = "lead (pending ack)"
-		}
-		line := fmt.Sprintf("%-6s %-18s %s", ss.Provider, role, statusStyle(ss.Status))
-		if ss.Reason != "" {
-			line += " " + dim.Render(ss.Reason)
-		}
-		line += dim.Render(" " + ago(ss.ObservedAt) + " via " + ss.StatusSource)
-		fmt.Fprintln(&b, line)
-	}
-	if len(s.sessions) == 0 {
-		fmt.Fprintln(&b, dim.Render("no sessions yet"))
-	}
-	fmt.Fprintln(&b)
-
 	if na := s.brief.Fields.NextAction; na != "" {
 		fmt.Fprintf(&b, "%s %s\n", title.Render("Next:"), trunc(na, max(20, m.width-7)))
 	}
@@ -410,19 +439,38 @@ func (m model) View() string {
 	}
 	fmt.Fprintln(&b)
 
-	fmt.Fprintln(&b, title.Render(fmt.Sprintf("Needs you (%d)", len(s.items))))
-	for i, it := range s.items {
-		line := fmt.Sprintf("%-10s %-6s %s", it.kind, it.id, trunc(it.text, max(20, m.width-20)))
+	row := func(i int, text string) {
+		mark := "  "
 		if i == m.cursor {
-			line = cursor.Render(line)
+			mark = "▶ "
+			text = cursor.Render(text)
 		}
-		fmt.Fprintln(&b, line)
+		fmt.Fprintln(&b, mark+text)
+		if i == m.cursor && s.items[i].keys != "" {
+			fmt.Fprintln(&b, "    "+keyHint.Render(s.items[i].keys))
+		}
 	}
-	if len(s.items) == 0 {
-		fmt.Fprintln(&b, dim.Render("nothing"))
+	fmt.Fprintln(&b, title.Render("Sessions"))
+	if s.nSess == 0 {
+		fmt.Fprintln(&b, dim.Render("  none yet"))
 	}
-	if it, ok := m.selected(); ok && it.keys != "" {
-		fmt.Fprintln(&b, dim.Render("  "+it.keys))
+	w := max(20, m.width-4)
+	for i := 0; i < s.nSess; i++ {
+		it := s.items[i]
+		text := fmt.Sprintf("%-6s %-10s %s %s", it.provider, it.role, statusStyle(it.status), dim.Render(ago(it.observed)))
+		if it.pane != "" && it.pane == s.mainPane {
+			text += " " + good.Render("◀ shown")
+		}
+		row(i, trunc(text, w+40))
+	}
+	fmt.Fprintln(&b)
+	fmt.Fprintln(&b, title.Render(fmt.Sprintf("Needs you (%d)", len(s.items)-s.nSess)))
+	if len(s.items) == s.nSess {
+		fmt.Fprintln(&b, dim.Render("  nothing"))
+	}
+	for i := s.nSess; i < len(s.items); i++ {
+		it := s.items[i]
+		row(i, fmt.Sprintf("%s %s %s", it.kind, it.id, trunc(it.text, max(10, w-len(it.kind)-len(it.id)-2))))
 	}
 	if m.input != nil {
 		fmt.Fprintf(&b, "\nAnswer %s: %s█  (enter send · esc cancel)\n", m.input.id, m.input.text)
@@ -430,7 +478,7 @@ func (m model) View() string {
 	if m.msg != "" {
 		fmt.Fprintf(&b, "\n%s\n", m.msg)
 	}
-	fmt.Fprintf(&b, "\n%s\n", dim.Render("click here, then ↑↓ select · t next task · updated "+s.at.Format("15:04:05")))
+	fmt.Fprintf(&b, "\n%s\n", dim.Render("↑↓ move · enter open · t other task · F2 here"))
 	return b.String()
 }
 

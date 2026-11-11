@@ -35,8 +35,12 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 
 	m := model{open: open, width: 80}
 	m.snap = loadSnapshot(open, 0)
+	if m.snap.nSess != 1 || m.snap.items[0].kind != "session" {
+		t.Fatalf("expected the lead session first: %+v", m.snap.items)
+	}
+	m.cursor = m.snap.nSess // first item that needs the user
 	v := m.View()
-	for _, want := range []string{"Task #1", "approval", "P-1", "rule", "R-1", "a approve"} {
+	for _, want := range []string{"Task #1", "Sessions", "claude", "lead", "▶ ", "approval", "P-1", "rule", "R-1", "a approve"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
