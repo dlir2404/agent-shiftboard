@@ -29,22 +29,9 @@ func (a *app) initCmd() *cobra.Command {
 			}
 			root, _ := os.Getwd()
 			dir := paths.StateDir(root)
-			for _, d := range []string{dir, filepath.Join(dir, "tasks"), filepath.Join(dir, "tools")} {
-				if err := os.MkdirAll(d, 0o700); err != nil {
-					return err
-				}
-			}
-			cfg := filepath.Join(dir, "config.toml")
-			if _, err := os.Stat(cfg); os.IsNotExist(err) {
-				if err := os.WriteFile(cfg, []byte(policy.SampleProjectConfig), 0o600); err != nil {
-					return err
-				}
-			}
-			db, err := store.Open(paths.ProjectDB(root))
-			if err != nil {
+			if err := initProject(root); err != nil {
 				return err
 			}
-			db.Close()
 			ignored := gitIgnores(root)
 			return a.emit(map[string]any{"root": root, "state_dir": dir, "gitignored": ignored}, func(w io.Writer) {
 				fmt.Fprintf(w, "Initialized %s\n", dir)
@@ -55,6 +42,27 @@ func (a *app) initCmd() *cobra.Command {
 			})
 		},
 	}
+}
+
+// initProject creates the state directory, sample policy, and database.
+func initProject(root string) error {
+	dir := paths.StateDir(root)
+	for _, d := range []string{dir, filepath.Join(dir, "tasks"), filepath.Join(dir, "tools")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return err
+		}
+	}
+	cfg := filepath.Join(dir, "config.toml")
+	if _, err := os.Stat(cfg); os.IsNotExist(err) {
+		if err := os.WriteFile(cfg, []byte(policy.SampleProjectConfig), 0o600); err != nil {
+			return err
+		}
+	}
+	db, err := store.Open(paths.ProjectDB(root))
+	if err != nil {
+		return err
+	}
+	return db.Close()
 }
 
 func gitIgnores(root string) bool {

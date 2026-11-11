@@ -60,8 +60,10 @@ func (a *app) rootCmd() *cobra.Command {
 		a.configCmd(), a.secretCmd(), a.toolCmd(), a.getCmd(), a.applyCmd(), a.lockCmd(),
 		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(),
 	)
-	root.RunE = func(cmd *cobra.Command, _ []string) error { return a.openWorkspace(cmd, 0) }
-	root.Args = cobra.NoArgs
+	root.AddCommand(a.startCmd())
+	root.Use = "agent-shiftboard [task description]"
+	root.RunE = a.rootRun
+	root.Args = cobra.ArbitraryArgs
 	return root
 }
 

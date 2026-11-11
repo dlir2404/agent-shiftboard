@@ -159,7 +159,7 @@ Lease transitions are transactional. At most one session holds a task's lease.
 There are two continuation kinds:
 
 - **Resume** of the same native session ID (wait-and-resume after cooldown, resume after a crash or lost host): `held` → `suspended` → `held` with the same holder. The session keeps its own context, so no readback is needed; reconciliation still runs after a crash or lost host. In tmux the same slot is restarted with the native resume command.
-- **New session** (fresh same-provider session after a context limit or when resume is impossible, or any cross-provider successor): `held` → `suspended` → `handoff_pending` → `held` by the new session after readback acknowledgement (see [Handoff protocol](#handoff-protocol)). The new session always starts in its own hidden window.
+- **New session** (fresh same-provider session after a context limit or when resume is impossible, or any cross-provider successor): `held` → `suspended` → `handoff_pending` → `held` by the new session after readback acknowledgement (see [Handoff protocol](#handoff-protocol)). The new session runs in the main slot when no live lead occupies it, otherwise in its own hidden window (D-15).
 
 ### Record statuses
 

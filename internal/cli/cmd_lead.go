@@ -110,6 +110,22 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 			return tmux.ErrNoTmux
 		}
 	}
+	var ws tmux.Workspace
+	if !registerOnly {
+		ws = tmux.New(tmux.Exec{}, c.Root)
+		if _, err := ws.Ensure(nil); err != nil {
+			return err
+		}
+		// With no live lead in the main slot, the new session runs right
+		// there, so the user sees any native prompt (folder trust, login,
+		// permissions). Hidden windows are only for replacing a live lead.
+		if !mainHasLiveLead(ctx, c, ws) {
+			if err := ws.RunInMain([]string{ws.Self, "start", "--task", fmt.Sprint(id), "--new"}); err != nil {
+				return err
+			}
+			return a.done(fmt.Sprintf("The new lead of task #%d is starting in the main slot. Run `agent-shiftboard` to open the workspace.", id), map[string]any{"task": id})
+		}
+	}
 	native := ""
 	if provider == "claude" {
 		native = uuid.NewString()
@@ -128,10 +144,6 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 			fmt.Fprintf(w, "Registered lead session %s for task #%d.\nLaunch context: %s\nStart the CLI yourself with %s=%s set.\n",
 				sid, id, launch, coord.SessionEnv, sid)
 		})
-	}
-	ws := tmux.New(tmux.Exec{}, c.Root)
-	if err := ws.Ensure(); err != nil {
-		return err
 	}
 	spec := a.launchSpec(c, sid, native, provider)
 	spec.LaunchContext, spec.InitialPrompt = launch, initialPrompt
@@ -221,40 +233,22 @@ func (a *app) resumeLead(ctx context.Context, c *coord.Coordinator, actor coord.
 		return fmt.Errorf("resume for %s is not implemented yet", s.Provider)
 	}
 	ws := tmux.New(tmux.Exec{}, c.Root)
-	if err := ws.Ensure(); err != nil {
+	if _, err := ws.Ensure(nil); err != nil {
 		return err
 	}
-	spec := a.launchSpec(c, s.ID, s.NativeSessionID, s.Provider)
-	resumeCmd, err := adapter.ClaudeResume(spec)
-	if err != nil {
-		return err
-	}
-	script, err := adapter.WriteScript(spec.SessionDir, "resume.sh", resumeCmd)
-	if err != nil {
-		return err
-	}
-	command := []string{"/bin/sh", script}
-	if alive, _ := ws.PaneAlive(s.PaneID); s.PaneID != "" && !alive {
-		if err := ws.Respawn(s.PaneID, spec.Env(), command); err == nil {
-			_ = ws.SwapIntoMainIfNeeded(s.PaneID)
-			return a.done("Resumed the lead's native session in its pane.", nil)
+	if alive, _ := ws.PaneAlive(s.PaneID); s.PaneID != "" && alive {
+		if err := ws.SwapIntoMainIfNeeded(s.PaneID); err != nil {
+			return err
 		}
-	} else if alive {
-		_ = ws.SwapIntoMainIfNeeded(s.PaneID)
 		return a.done("The lead's session is still running; it is in the main slot.", nil)
 	}
-	pane, err := ws.Launch("lead-"+s.ID[:8], spec.Env(), command)
-	if err != nil {
+	if mainHasLiveLead(ctx, c, ws) {
+		return errors.New("another live lead occupies the main slot; open that task or stop its CLI first")
+	}
+	if err := ws.RunInMain([]string{ws.Self, "start", "--task", fmt.Sprint(id)}); err != nil {
 		return err
 	}
-	_ = ws.KeepOnExit(pane)
-	if err := c.SetSessionRuntime(ctx, s.ID, pane, 0, ""); err != nil {
-		return err
-	}
-	if err := ws.SwapIntoMain(pane); err != nil {
-		return err
-	}
-	return a.done("Resumed the lead's native session in a new pane in the main slot.", nil)
+	return a.done(fmt.Sprintf("Resuming the lead of task #%d in the main slot. Run `agent-shiftboard` to open the workspace.", id), nil)
 }
 
 // writeLaunchContext writes the text a new session receives at launch and

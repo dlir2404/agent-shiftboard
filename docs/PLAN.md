@@ -148,7 +148,7 @@ The storage location is project-scoped and local: a dedicated ignored `.agent-sh
 1. After a cooldown with a known reset time, offer wait-and-resume of the same native session within the user's configured threshold.
 2. After a closed terminal, lost tmux host, or crash, reconcile and resume the native session by ID where supported.
 3. Resumes keep the same session as lease holder and need no readback ([lease states](STATE-CONTRACT.md#lead-lease-state)).
-4. After a context limit, or when resume is not possible, the user can start a fresh session of the same provider (`lead new`). It is a new session: it starts in its own hidden window, receives the current brief, rules, open items, and resource index at launch, and must give a readback acknowledgement before it holds the lease; it then moves into the main slot.
+4. After a context limit, or when resume is not possible, the user can start a fresh session of the same provider (`lead new`). It is a new session: it runs in the main slot (free, since the previous CLI exited), receives the current brief, rules, open items, and resource index at launch, and must give a readback acknowledgement before it holds the lease.
 5. Nothing is recovered from transcripts.
 
 ### Cross-provider handoff and failover
@@ -216,13 +216,13 @@ Each adapter exposes: detect/capability report, interactive launch and resume co
 └────────────────────────────────────────────────────────────────┘
 ```
 
-One tmux session per project holds this layout (D-15). The left slot is the current lead's real CLI pane; the right pane is the Bubble Tea board; the bottom line names the lead's provider, permission mode, and brief revision. Closing the terminal detaches; reopening reattaches.
+The user's entry point is `agent-shiftboard [task description]`: it initializes the project if needed, creates or attaches to the workspace, and the main slot asks for a task (unless one was given) and runs the lead's CLI right there. One tmux session per project holds this layout (D-15). The left slot is the current lead's real CLI pane; the right pane is the Bubble Tea board; the bottom line names the lead's provider, permission mode, and brief revision. Closing the terminal detaches; reopening reattaches.
 
 On a lead change:
 
 1. The old lead's pane stays visible with its error while the board shows the classified status and offers: resume (wait-and-resume or resume by ID), a new session of the same provider, handoff to a configured successor of another provider, or later.
 2. Resume restarts the same slot with the native resume command (`respawn-pane`).
-3. A new session — same or other provider — shows reconciliation results, starts in a hidden window with the brief passed at launch, waits for readback acknowledgement, and then swaps into the main slot; choosing the option is the user's confirmation.
+3. A new session — same or other provider — shows reconciliation results and starts with the brief passed at launch: directly in the main slot when no live lead is there, otherwise in a hidden window that swaps into the main slot after readback acknowledgement; choosing the option is the user's confirmation.
 4. The old pane moves to a background window, viewable but not read by AgentShiftboard, until the user closes it.
 
 Worker panes open in a popup. The board always distinguishes task state from agent session status. It shows waiting-for-approval state, cooldown/reset information when known, stale-brief flags, proposed rules and delegations awaiting confirmation, held locks, the active worktree, and the lead lease state.

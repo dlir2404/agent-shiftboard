@@ -52,9 +52,11 @@ func (a *app) openWorkspace(cmd *cobra.Command, taskID int64) error {
 			return coord.ErrUserOnly
 		}
 		ws := tmux.New(tmux.Exec{}, c.Root)
-		if err := ws.Ensure(); err != nil {
+		created, err := ws.Ensure(nil)
+		if err != nil {
 			return err
 		}
+		_ = created
 		if taskID > 0 {
 			t, err := c.GetTask(ctx, taskID)
 			if err != nil {
@@ -65,8 +67,8 @@ func (a *app) openWorkspace(cmd *cobra.Command, taskID int64) error {
 				if err := ws.SwapIntoMainIfNeeded(pane); err != nil {
 					return err
 				}
-			} else if t.Status != "done" && t.Status != "cancelled" {
-				fmt.Fprintf(a.errOut, "Task #%d has no running lead. Start one with `agent-shiftboard lead new %d` or `lead resume %d`.\n", taskID, taskID, taskID)
+			} else if err := a.placeStart(ctx, c, ws, []string{ws.Self, "start", "--task", fmt.Sprint(taskID)}); err != nil {
+				return err
 			}
 		}
 		return attach(ws)

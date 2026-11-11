@@ -377,3 +377,15 @@ func TestDelegations(t *testing.T) {
 		t.Fatalf("%+v", ds[0])
 	}
 }
+
+func TestCancelPendingHandoff(t *testing.T) {
+	f := newFixture(t)
+	id := must(f.c.CreateTask(f.ctx, User, "t", ""))
+	sid := must(f.c.StartLead(f.ctx, User, id, SessionSpec{Provider: "claude"}))
+	ok(t, f.c.CancelPendingHandoff(f.ctx, User, id))
+	if task := must(f.c.GetTask(f.ctx, id)); task.LeaseState != "vacant" {
+		t.Fatalf("lease %s", task.LeaseState)
+	}
+	fails(t, f.c.AckHandoff(f.ctx, Actor{SessionID: sid}, nil), "no pending handoff")
+	must(f.c.StartLead(f.ctx, User, id, SessionSpec{Provider: "claude"}))
+}

@@ -164,6 +164,17 @@ func needsYou(ctx context.Context, c *coord.Coordinator, taskID int64) []item {
 			out = append(out, item{kind: "lock", id: l.Name, text: "held by a session that is gone", keys: "b break"})
 		}
 	}
+	if t, err := c.GetTask(ctx, taskID); err == nil && t.PendingLead != "" {
+		ss, _ := c.ListSessions(ctx, taskID)
+		for _, s := range ss {
+			if s.ID == t.PendingLead && s.Status == "starting" {
+				if obs, err := time.Parse(time.RFC3339, s.ObservedAt); err == nil && time.Since(obs) > 30*time.Second {
+					out = append(out, item{kind: "stale", id: "lead", text: "the new lead has not reported for " + ago(s.ObservedAt) +
+						"; it may be waiting on a prompt (folder trust, login) in its window (Ctrl-b w)"})
+				}
+			}
+		}
+	}
 	stale, _ := c.StaleReasons(ctx, taskID)
 	for _, s := range stale {
 		out = append(out, item{kind: "stale", id: "brief", text: s + " — ask the lead to update the brief"})

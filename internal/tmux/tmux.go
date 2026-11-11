@@ -80,24 +80,37 @@ func (w Workspace) Exists() bool {
 	return err == nil
 }
 
-// Ensure creates the session with the main window (placeholder lead slot
-// on the left, board on the right) if it does not exist. The agent session
-// variable is never set in the session's global environment.
-func (w Workspace) Ensure() error {
+// Ensure creates the session if it does not exist: the main window holds
+// the lead slot on the left, running mainCommand (normally
+// `agent-shiftboard start`, which asks for a task and runs the lead's CLI
+// right there), and the board on the right. The agent session variable is
+// never set in the session's global environment. It reports whether the
+// session was created.
+func (w Workspace) Ensure(mainCommand []string) (bool, error) {
 	if w.Exists() {
-		return nil
+		return false, nil
 	}
-	placeholder := fmt.Sprintf("printf '%%s\\n' 'No lead is running here yet.' 'Start one from the board or: agent-shiftboard lead new <task>'; exec %s", shellQuote(loginShell()))
+	if len(mainCommand) == 0 {
+		mainCommand = []string{w.Self, "start"}
+	}
 	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "main", "-c", w.Root, "-x", "220", "-y", "60",
-		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, placeholder); err != nil {
-		return err
+		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, joinCommand(mainCommand)); err != nil {
+		return false, err
 	}
 	_, _ = w.R.Run("set-environment", "-t", w.Session, "-u", "AGENT_SHIFTBOARD_SESSION_ID")
+	_ = w.KeepOnExit(w.MainSlot())
 	if _, err := w.R.Run("split-window", "-h", "-d", "-l", "34%", "-t", w.Session+":main", "-c", w.Root,
 		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, shellQuote(w.Self)+" board"); err != nil {
-		return err
+		return true, err
 	}
 	_, err := w.R.Run("select-pane", "-t", w.MainSlot())
+	return true, err
+}
+
+// RunInMain replaces whatever runs in the main slot with command.
+func (w Workspace) RunInMain(command []string) error {
+	_, err := w.R.Run("respawn-pane", "-k", "-t", w.MainSlot(), "-c", w.Root,
+		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, joinCommand(command))
 	return err
 }
 

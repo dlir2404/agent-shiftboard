@@ -502,3 +502,33 @@ func (c *Coordinator) StaleReasons(ctx context.Context, taskID int64) ([]string,
 	}
 	return reasons, nil
 }
+
+// CancelPendingHandoff abandons a new lead session that never acknowledged
+// (user operation). The session is marked failed and the lease returns to
+// suspended (if there is a previous holder) or vacant.
+func (c *Coordinator) CancelPendingHandoff(ctx context.Context, a Actor, taskID int64) error {
+	if err := requireUser(a); err != nil {
+		return err
+	}
+	err := c.tx(ctx, func(tx *sql.Tx) error {
+		l, err := loadLease(tx, taskID)
+		if err != nil {
+			return err
+		}
+		if l.State != "handoff_pending" {
+			return fmt.Errorf("task #%d has no pending handoff", taskID)
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET status='failed',reason='user_stopped',observed_at=? WHERE id=?`, c.now(), l.Pending); err != nil {
+			return err
+		}
+		state := "suspended"
+		if l.Holder == "" {
+			state = "vacant"
+		}
+		return c.setLease(tx, taskID, state, l.Holder, "", "pending handoff to "+l.Pending+" cancelled by user")
+	})
+	if err == nil {
+		c.changed(taskID)
+	}
+	return err
+}

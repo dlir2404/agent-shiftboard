@@ -8,20 +8,18 @@ The durable memory is a concise task brief authored and maintained by the lead a
 
 ## Status
 
-Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MCP server, status board) is in place with tests. The Phase 2 Claude Code adapter and tmux workspace are implemented but not yet validated against a live session; see [Phase 0 findings](docs/SPIKE-PHASE0.md#still-to-validate-live).
+Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MCP server, status board) is in place with tests. The Phase 2 Claude Code adapter and tmux workspace are implemented and partly validated live (launch in the visible main slot, folder-trust prompt, exit menu); hooks and resume are still to be validated; see [Phase 0 findings](docs/SPIKE-PHASE0.md#still-to-validate-live).
 
 ## Quick start
 
 ```sh
-go build -o bin/agent-shiftboard ./cmd/agent-shiftboard   # put bin/ on PATH
-agent-shiftboard init            # in your project root; add .agent-shiftboard/ to .gitignore
-agent-shiftboard doctor          # detects claude, codex, agy, hermes, tmux (no model calls)
-agent-shiftboard run "implement cache" --goal "add an LRU cache to the API"
-agent-shiftboard lead new 1      # needs tmux: starts Claude Code in the workspace
-agent-shiftboard                 # attach to the workspace: lead CLI + status board
+brew install tmux
+go build -o ~/.local/bin/agent-shiftboard ./cmd/agent-shiftboard   # any directory on PATH
+cd your-project
+agent-shiftboard                        # or: agent-shiftboard "add an LRU cache to the API"
 ```
 
-Without tmux, `agent-shiftboard board` shows the status board and all state commands work.
+The first run initializes `.agent-shiftboard/` (add it to `.gitignore`), opens a tmux workspace with the lead on the left and the status board on the right, asks for a task, and starts Claude Code as the lead in that pane. When the CLI exits, the pane offers resume, a new session, or another task. Without tmux, the lead runs in the current terminal and `agent-shiftboard board` shows the board in another terminal.
 
 ## Product invariants
 
