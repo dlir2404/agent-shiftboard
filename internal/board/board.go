@@ -19,6 +19,9 @@ import (
 // Opener opens the coordinator for one refresh or action.
 type Opener func(ctx context.Context) (*coord.Coordinator, error)
 
+// Refresh runs on every board refresh, e.g. to reconcile tmux panes.
+var Refresh func(ctx context.Context, c *coord.Coordinator)
+
 // Run starts the board. It refuses to run inside a managed agent session,
 // because the board performs user operations.
 func Run(open Opener, taskID int64) error {
@@ -89,6 +92,9 @@ func loadSnapshot(open Opener, taskID int64) snapshot {
 		return s
 	}
 	defer c.Close()
+	if Refresh != nil {
+		Refresh(ctx, c)
+	}
 	if s.tasks, err = c.ListTasks(ctx); err != nil {
 		s.err = err
 		return s

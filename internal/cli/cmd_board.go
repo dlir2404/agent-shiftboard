@@ -21,6 +21,7 @@ func (a *app) boardCmd() *cobra.Command {
 				return err
 			}
 			c.Close()
+			board.Refresh = reconcilePanes
 			return board.Run(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) }, a.task)
 		},
 	}

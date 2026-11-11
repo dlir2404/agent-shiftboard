@@ -1,0 +1,218 @@
+// Package tmux hosts the project workspace: one tmux session per project
+// with a fixed main slot for the lead's native CLI beside the status board,
+// and one hidden window per agent session (D-14, D-15).
+package tmux
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// Runner executes tmux commands; tests replace it.
+type Runner interface {
+	Run(args ...string) (string, error)
+}
+
+// Exec runs the real tmux binary.
+type Exec struct{}
+
+// Run executes tmux with args and returns trimmed stdout.
+func (Exec) Run(args ...string) (string, error) {
+	out, err := exec.Command("tmux", args...).CombinedOutput()
+	s := strings.TrimSpace(string(out))
+	if err != nil {
+		return s, fmt.Errorf("tmux %s: %v: %s", strings.Join(args, " "), err, s)
+	}
+	return s, nil
+}
+
+// Available reports whether tmux is installed.
+func Available() bool {
+	_, err := exec.LookPath("tmux")
+	return err == nil
+}
+
+// ErrNoTmux explains how to get tmux.
+var ErrNoTmux = errors.New("tmux is not installed; install it with `brew install tmux`")
+
+// Workspace is one project's tmux session.
+type Workspace struct {
+	R       Runner
+	Session string // tmux session name
+	Root    string // project root
+	Self    string // path of the agent-shiftboard binary
+}
+
+// MainSlot is the target of the lead slot (left pane of the main window).
+func (w Workspace) MainSlot() string { return w.Session + ":main.0" }
+
+var unsafe = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
+
+// SessionName derives a stable tmux session name from the project root.
+func SessionName(root string) string {
+	sum := sha1.Sum([]byte(root))
+	base := unsafe.ReplaceAllString(filepath.Base(root), "-")
+	if len(base) > 20 {
+		base = base[:20]
+	}
+	return "asb-" + base + "-" + hex.EncodeToString(sum[:])[:6]
+}
+
+// New returns the workspace for a project root.
+func New(r Runner, root string) Workspace {
+	self, err := os.Executable()
+	if err != nil {
+		self = "agent-shiftboard"
+	}
+	return Workspace{R: r, Session: SessionName(root), Root: root, Self: self}
+}
+
+// Exists reports whether the tmux session is running.
+func (w Workspace) Exists() bool {
+	_, err := w.R.Run("has-session", "-t", "="+w.Session)
+	return err == nil
+}
+
+// Ensure creates the session with the main window (placeholder lead slot
+// on the left, board on the right) if it does not exist. The agent session
+// variable is never set in the session's global environment.
+func (w Workspace) Ensure() error {
+	if w.Exists() {
+		return nil
+	}
+	placeholder := fmt.Sprintf("printf '%%s\\n' 'No lead is running here yet.' 'Start one from the board or: agent-shiftboard lead new <task>'; exec %s", shellQuote(loginShell()))
+	if _, err := w.R.Run("new-session", "-d", "-s", w.Session, "-n", "main", "-c", w.Root, "-x", "220", "-y", "60",
+		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, placeholder); err != nil {
+		return err
+	}
+	_, _ = w.R.Run("set-environment", "-t", w.Session, "-u", "AGENT_SHIFTBOARD_SESSION_ID")
+	if _, err := w.R.Run("split-window", "-h", "-d", "-l", "34%", "-t", w.Session+":main", "-c", w.Root,
+		"-e", "AGENT_SHIFTBOARD_PROJECT="+w.Root, shellQuote(w.Self)+" board"); err != nil {
+		return err
+	}
+	_, err := w.R.Run("select-pane", "-t", w.MainSlot())
+	return err
+}
+
+// AttachArgs returns the tmux arguments that put the user's terminal on the
+// workspace: switch-client inside tmux, attach otherwise.
+func (w Workspace) AttachArgs() []string {
+	if os.Getenv("TMUX") != "" {
+		return []string{"switch-client", "-t", w.Session}
+	}
+	return []string{"attach-session", "-t", w.Session}
+}
+
+// Launch starts a command in a new hidden window with the given environment
+// and returns its pane ID (e.g. "%12").
+func (w Workspace) Launch(name string, env map[string]string, command []string) (string, error) {
+	args := []string{"new-window", "-d", "-P", "-F", "#{pane_id}", "-t", w.Session + ":", "-n", name, "-c", w.Root}
+	for _, k := range sortedKeys(env) {
+		args = append(args, "-e", k+"="+env[k])
+	}
+	args = append(args, joinCommand(command))
+	return w.R.Run(args...)
+}
+
+// KeepOnExit keeps a pane visible after its process exits, so the user sees
+// the final screen and the pane can be respawned with a resume command.
+func (w Workspace) KeepOnExit(pane string) error {
+	_, err := w.R.Run("set-option", "-p", "-t", pane, "remain-on-exit", "on")
+	return err
+}
+
+// MainPane returns the pane ID currently in the main slot.
+func (w Workspace) MainPane() (string, error) {
+	return w.R.Run("display-message", "-p", "-t", w.MainSlot(), "#{pane_id}")
+}
+
+// SwapIntoMain moves pane into the main slot; the pane that was there moves
+// to pane's old window, where it stays alive.
+func (w Workspace) SwapIntoMain(pane string) error {
+	_, err := w.R.Run("swap-pane", "-d", "-s", pane, "-t", w.MainSlot())
+	return err
+}
+
+// SwapIntoMainIfNeeded swaps pane into the main slot unless it is already there.
+func (w Workspace) SwapIntoMainIfNeeded(pane string) error {
+	if cur, err := w.MainPane(); err == nil && cur == pane {
+		return nil
+	}
+	return w.SwapIntoMain(pane)
+}
+
+// Respawn restarts a pane with a new command (native resume), keeping its
+// position.
+func (w Workspace) Respawn(pane string, env map[string]string, command []string) error {
+	args := []string{"respawn-pane", "-k", "-t", pane, "-c", w.Root}
+	for _, k := range sortedKeys(env) {
+		args = append(args, "-e", k+"="+env[k])
+	}
+	args = append(args, joinCommand(command))
+	_, err := w.R.Run(args...)
+	return err
+}
+
+// PaneAlive reports whether a pane exists and its process has not exited.
+func (w Workspace) PaneAlive(pane string) (bool, error) {
+	out, err := w.R.Run("display-message", "-p", "-t", pane, "#{pane_dead}")
+	if err != nil {
+		return false, nil
+	}
+	return out == "0", nil
+}
+
+// Capture returns the last lines of a pane's visible content. It is used
+// only for live status classification and is never stored.
+func (w Workspace) Capture(pane string, lines int) (string, error) {
+	return w.R.Run("capture-pane", "-p", "-J", "-t", pane, "-S", fmt.Sprint(-lines))
+}
+
+// Popup shows a pane's window in a popup, used to view workers.
+func (w Workspace) PopupArgs(window string) []string {
+	return []string{"display-popup", "-E", "-w", "90%", "-h", "85%", "tmux attach-session -r -t " + w.Session + ":" + window}
+}
+
+func joinCommand(cmd []string) string {
+	q := make([]string, len(cmd))
+	for i, c := range cmd {
+		q[i] = shellQuote(c)
+	}
+	return strings.Join(q, " ")
+}
+
+var plain = regexp.MustCompile(`^[a-zA-Z0-9_./:=@%+,-]+$`)
+
+func shellQuote(s string) string {
+	if s != "" && plain.MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func loginShell() string {
+	if s := os.Getenv("SHELL"); s != "" {
+		return s
+	}
+	return "/bin/sh"
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 1; i < len(keys); i++ {
+		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
+			keys[j], keys[j-1] = keys[j-1], keys[j]
+		}
+	}
+	return keys
+}

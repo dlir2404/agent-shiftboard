@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS briefs (
   task_id    INTEGER NOT NULL REFERENCES tasks(id),
   revision   INTEGER NOT NULL,
   fields     TEXT NOT NULL,          -- JSON of lead-owned fields
+  head       TEXT NOT NULL DEFAULT '', -- Git HEAD of the task worktree when written
   updated_by TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (task_id, revision)

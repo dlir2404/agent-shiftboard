@@ -8,7 +8,20 @@ The durable memory is a concise task brief authored and maintained by the lead a
 
 ## Status
 
-Planning only. No runtime or provider adapter has been implemented yet.
+Early implementation (branch `feat/phase-0-1`). Phase 1 (state contract, CLI, MCP server, status board) is in place with tests. The Phase 2 Claude Code adapter and tmux workspace are implemented but not yet validated against a live session; see [Phase 0 findings](docs/SPIKE-PHASE0.md#still-to-validate-live).
+
+## Quick start
+
+```sh
+go build -o bin/agent-shiftboard ./cmd/agent-shiftboard   # put bin/ on PATH
+agent-shiftboard init            # in your project root; add .agent-shiftboard/ to .gitignore
+agent-shiftboard doctor          # detects claude, codex, agy, hermes, tmux (no model calls)
+agent-shiftboard run "implement cache" --goal "add an LRU cache to the API"
+agent-shiftboard lead new 1      # needs tmux: starts Claude Code in the workspace
+agent-shiftboard                 # attach to the workspace: lead CLI + status board
+```
+
+Without tmux, `agent-shiftboard board` shows the status board and all state commands work.
 
 ## Product invariants
 

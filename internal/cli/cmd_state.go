@@ -654,17 +654,17 @@ func (a *app) handoffCmd() *cobra.Command {
 		},
 	}
 	confirm := &cobra.Command{
-		Use: "confirm <task>", Short: "Confirm showing the new lead in the main slot (user)", Args: cobra.ExactArgs(1),
+		Use: "confirm <task>", Short: "Move the acknowledged lead into the main slot (user)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			id, err := parseTaskArg(args[0])
 			if err != nil {
 				return err
 			}
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
-				if err := c.ConfirmSwap(ctx, actor, id); err != nil {
+				if err := a.confirmSwap(ctx, c, actor, id); err != nil {
 					return err
 				}
-				return a.done("Swap confirmed.", nil)
+				return a.done("The lead is in the main slot.", nil)
 			})
 		},
 	}

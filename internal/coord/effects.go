@@ -227,6 +227,13 @@ func (c *Coordinator) ListEffects(ctx context.Context, taskID int64, status stri
 	return out, rows.Err()
 }
 
+// InFlightEffects counts a session's effects that are in flight.
+func (c *Coordinator) InFlightEffects(ctx context.Context, sessionID string) (int, error) {
+	var n int
+	err := c.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM side_effects WHERE session_id=? AND status='in_flight'`, "session:"+sessionID).Scan(&n)
+	return n, err
+}
+
 // markEffectsUnknown applies the session-loss rule: in_flight effects become
 // unknown when a turn ends; planned and in_flight effects become unknown
 // when the session stops, fails, or stays unknown past the grace period.

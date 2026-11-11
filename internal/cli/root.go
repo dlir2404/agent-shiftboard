@@ -58,8 +58,10 @@ func (a *app) rootCmd() *cobra.Command {
 		a.pendingCmd(), a.delegationCmd(), a.effectCmd(), a.milestoneCmd(),
 		a.delegateCmd(), a.assignmentCmd(), a.handoffCmd(), a.sessionCmd(),
 		a.configCmd(), a.secretCmd(), a.toolCmd(), a.getCmd(), a.applyCmd(), a.lockCmd(),
-		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(),
+		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(),
 	)
+	root.RunE = func(cmd *cobra.Command, _ []string) error { return a.openWorkspace(cmd, 0) }
+	root.Args = cobra.NoArgs
 	return root
 }
 

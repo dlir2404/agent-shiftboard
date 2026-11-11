@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	"github.com/dlir2404/agent-shiftboard/internal/secretscan"
@@ -96,8 +97,8 @@ func (c *Coordinator) UpdateBrief(ctx context.Context, a Actor, taskID, baseRevi
 		}
 		newRev = cur.Revision + 1
 		now := c.now()
-		if _, err := tx.Exec(`INSERT INTO briefs(task_id,revision,fields,updated_by,updated_at) VALUES(?,?,?,?,?)`,
-			taskID, newRev, string(raw), a.String(), now); err != nil {
+		if _, err := tx.Exec(`INSERT INTO briefs(task_id,revision,fields,head,updated_by,updated_at) VALUES(?,?,?,?,?,?)`,
+			taskID, newRev, string(raw), c.taskHead(tx, taskID), a.String(), now); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(`UPDATE tasks SET brief_revision=?,updated_at=? WHERE id=?`, newRev, now, taskID); err != nil {
@@ -114,6 +115,28 @@ func (c *Coordinator) UpdateBrief(ctx context.Context, a Actor, taskID, baseRevi
 		c.changed(taskID)
 	}
 	return newRev, err
+}
+
+// taskHead returns the Git HEAD of the task's worktree (or the project
+// root), or "" when it cannot be read.
+func (c *Coordinator) taskHead(q interface {
+	QueryRow(string, ...any) *sql.Row
+}, taskID int64) string {
+	var wt string
+	_ = q.QueryRow(`SELECT worktree FROM tasks WHERE id=?`, taskID).Scan(&wt)
+	if wt == "" {
+		wt = c.Root
+	}
+	return GitHead(wt)
+}
+
+// GitHead runs a read-only `git rev-parse HEAD` in dir.
+var GitHead = func(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func applyPatch(f *BriefFields, p BriefPatch) error {

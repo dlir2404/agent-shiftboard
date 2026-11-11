@@ -479,19 +479,26 @@ func (c *Coordinator) ListSessions(ctx context.Context, taskID int64) ([]Session
 	return out, rows.Err()
 }
 
-// StaleReasons reports why a task's brief is stale (D-17). Phase 1 checks
-// turn counts; Git HEAD and external-action checks are added with adapters.
+// StaleReasons reports why a task's brief is stale (D-17): Git HEAD moved
+// since the brief was written, or too many turns passed. Unrecorded
+// external actions are blocked at the hook instead.
 func (c *Coordinator) StaleReasons(ctx context.Context, taskID int64) ([]string, error) {
 	t, err := c.GetTask(ctx, taskID)
 	if err != nil || t.LeadSession == "" {
 		return nil, err
+	}
+	var reasons []string
+	var recorded string
+	_ = c.DB.QueryRowContext(ctx, `SELECT head FROM briefs WHERE task_id=? AND revision=?`, taskID, t.BriefRevision).Scan(&recorded)
+	if cur := c.taskHead(c.DB, taskID); recorded != "" && cur != "" && cur != recorded {
+		reasons = append(reasons, fmt.Sprintf("HEAD moved from %.7s to %.7s since brief r%d", recorded, cur, t.BriefRevision))
 	}
 	var turns int
 	if err := c.DB.QueryRowContext(ctx, `SELECT turns_since_brief FROM sessions WHERE id=?`, t.LeadSession).Scan(&turns); err != nil {
 		return nil, err
 	}
 	if turns >= c.Policy.StaleTurns {
-		return []string{fmt.Sprintf("%d turns since the last brief revision", turns)}, nil
+		reasons = append(reasons, fmt.Sprintf("%d turns since the last brief revision", turns))
 	}
-	return nil, nil
+	return reasons, nil
 }
