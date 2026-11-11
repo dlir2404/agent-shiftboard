@@ -1,0 +1,7 @@
+# Local project state and native session references
+.agent-shiftboard/
+
+# Go build output
+/bin/
+/dist/
+coverage.out
