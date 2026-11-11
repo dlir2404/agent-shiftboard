@@ -62,6 +62,9 @@ func (c *Coordinator) CreateAssignment(ctx context.Context, a Actor, in Assignme
 			return err
 		}
 		id, _ = res.LastInsertId()
+		if err := c.syncAssignmentItem(tx, taskID, FormatID("A", id), in.Scope, "assigned", ""); err != nil {
+			return err
+		}
 		return c.event(tx, taskID, a, "assignment_created", FormatID("A", id))
 	})
 	if err == nil {
@@ -110,6 +113,9 @@ func (c *Coordinator) SubmitAssignment(ctx context.Context, a Actor, id, result,
 		if _, err := tx.Exec(`UPDATE assignments SET status='submitted',result=?,evidence=?,updated_at=? WHERE id=?`, result, evidence, c.now(), n); err != nil {
 			return err
 		}
+		if err := c.syncAssignmentItem(tx, taskID, id, "", "submitted", ""); err != nil {
+			return err
+		}
 		return c.event(tx, taskID, a, "assignment_submitted", id)
 	})
 }
@@ -134,6 +140,9 @@ func (c *Coordinator) ReviewAssignment(ctx context.Context, a Actor, id string, 
 		if _, err := tx.Exec(`UPDATE assignments SET status=?,reason=?,updated_at=? WHERE id=?`, to, reason, c.now(), n); err != nil {
 			return err
 		}
+		if err := c.syncAssignmentItem(tx, taskID, id, "", to, ""); err != nil {
+			return err
+		}
 		return c.event(tx, taskID, a, "assignment_"+to, id)
 	})
 }
@@ -149,6 +158,9 @@ func (c *Coordinator) CancelAssignment(ctx context.Context, a Actor, id, reason 
 			return fmt.Errorf("%s is already %s", id, status)
 		}
 		if _, err := tx.Exec(`UPDATE assignments SET status='cancelled',reason=?,updated_at=? WHERE id=?`, reason, c.now(), n); err != nil {
+			return err
+		}
+		if err := c.syncAssignmentItem(tx, taskID, id, "", "cancelled", ""); err != nil {
 			return err
 		}
 		return c.event(tx, taskID, a, "assignment_cancelled", id)

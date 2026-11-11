@@ -130,8 +130,10 @@ func (c *Coordinator) RegisterWorker(ctx context.Context, a Actor, assignmentID 
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(`UPDATE assignments SET worker_session=?,provider=?,updated_at=? WHERE id=?`, sid, spec.Provider, c.now(), n)
-		return err
+		if _, err = tx.Exec(`UPDATE assignments SET worker_session=?,provider=?,updated_at=? WHERE id=?`, sid, spec.Provider, c.now(), n); err != nil {
+			return err
+		}
+		return c.syncAssignmentItem(tx, taskID, assignmentID, "", "assigned", spec.Provider+" worker")
 	})
 	if err == nil {
 		c.changed(taskID)
@@ -221,8 +223,14 @@ func (c *Coordinator) applyObservation(tx *sql.Tx, s sessionInfo, status, reason
 	}
 	// Assignment progress.
 	if status == "running" && s.Role == "worker" {
-		if _, err := tx.Exec(`UPDATE assignments SET status='running',updated_at=? WHERE worker_session=? AND status='assigned'`, now, s.ID); err != nil {
-			return err
+		var aid int64
+		if err := tx.QueryRow(`SELECT id FROM assignments WHERE worker_session=? AND status='assigned'`, s.ID).Scan(&aid); err == nil {
+			if _, err := tx.Exec(`UPDATE assignments SET status='running',updated_at=? WHERE id=?`, now, aid); err != nil {
+				return err
+			}
+			if err := c.syncAssignmentItem(tx, s.TaskID, FormatID("A", aid), "", "running", ""); err != nil {
+				return err
+			}
 		}
 	}
 	// Locks held by a session that is gone become stale.

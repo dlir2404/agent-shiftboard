@@ -23,6 +23,7 @@ type View struct {
 	Unknown     []coord.Effect
 	Milestones  []coord.Milestone
 	Resources   coord.Resources
+	Items       []coord.Item
 	Stale       []string
 }
 
@@ -52,6 +53,9 @@ func Load(ctx context.Context, c *coord.Coordinator, taskID int64) (View, error)
 		return v, err
 	}
 	if v.Resources, err = c.GetResources(ctx); err != nil {
+		return v, err
+	}
+	if v.Items, err = c.ListItems(ctx, taskID); err != nil {
 		return v, err
 	}
 	v.Stale, err = c.StaleReasons(ctx, taskID)
@@ -96,6 +100,24 @@ func markdown(v View, compact bool) string {
 		b.WriteString("\n")
 	}
 
+	if len(v.Items) > 0 {
+		b.WriteString("## Tasks\n\n")
+		for _, it := range v.Items {
+			if it.Status == "cancelled" {
+				continue
+			}
+			mark := map[string]string{"done": "[x]", "in_progress": "[~]", "review": "[?]", "blocked": "[!]"}[it.Status]
+			if mark == "" {
+				mark = "[ ]"
+			}
+			owner := ""
+			if it.Owner != "" {
+				owner = " — " + it.Owner
+			}
+			fmt.Fprintf(&b, "- %s %s %s%s\n", mark, it.ID, it.Text, owner)
+		}
+		b.WriteString("\n")
+	}
 	list(&b, "Decisions", f.Decisions)
 	list(&b, "Completed", f.Completed)
 	section(&b, "In progress", f.InProgress)
@@ -240,6 +262,7 @@ func LaunchContext(v View, sessionID string, readback []string) string {
 	b.WriteString(`Working rules:
 - Task state lives in AgentShiftboard. Change it only with agent-shiftboard commands or its MCP tools. The Markdown brief file is read-only.
 - Keep the brief current (brief update --base <revision>): decisions, completed work, next_action, blockers.
+- The user follows this session through its task list. Keep it moving: use your own todo/plan list for the steps (it is mirrored automatically), and item add/set for anything else, such as steps that wait for the user.
 - Before an external or non-idempotent action (git push, deploy, DB write, sending a message, publishing): effect plan, then effect start right before it, then effect finish with evidence. agent-shiftboard commands themselves are never side effects; do not wrap them in effects.
 - When the user states a durable rule ("always ask before pushing"), record it with rule add --scope user|project|task --source "user in chat".
 - When a rule or common sense requires the user's approval: open it with pending add --kind approval --target <target> <action>, ask the user in chat, and when they clearly approve, record it with pending record-approval <P-id> --quote "<their words>". Never treat silence or a similar earlier approval as approval.

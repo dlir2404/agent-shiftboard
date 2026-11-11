@@ -30,6 +30,7 @@ var codexAgentShiftboardTools = []string{
 	"shiftboard_assignment_submit", "shiftboard_assignment_review", "shiftboard_assignment_cancel", "shiftboard_task_status",
 	"shiftboard_task_create", "shiftboard_task_describe", "shiftboard_config_set", "shiftboard_secret_ref_add",
 	"shiftboard_tool_register", "shiftboard_lock_acquire", "shiftboard_lock_release",
+	"shiftboard_item_list", "shiftboard_item_add", "shiftboard_item_set",
 }
 
 var codexHookEvents = []struct {

@@ -155,6 +155,7 @@ type HookInput struct {
 	HookEventName    string          `json:"hook_event_name"`
 	ToolName         string          `json:"tool_name"`
 	ToolInput        json.RawMessage `json:"tool_input"`
+	ToolResponse     json.RawMessage `json:"tool_response"`
 	NotificationType string          `json:"notification_type"`
 	Source           string          `json:"source"`
 	Reason           string          `json:"reason"`

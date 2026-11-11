@@ -207,16 +207,20 @@ Each adapter exposes: detect/capability report, interactive launch and resume co
 ### Primary screen
 
 ```text
-AgentShiftboard  ~/code/project  ● 1 running  ◐ 1 need you
-
-SESSIONS                                   │ PREVIEW
-▶ #4 README via Codex + goodbye.txt        │ codex worker A-1 · task #4
-    ○ claude  lead       idle              │ Status: ◐ asks to trust the folder
-    ◐ codex   worker A-1 asks to trust…    │ Assignment: Write README.md …
-    ! approval P-2 git push on origin main │ Output
-  #1 Create hello.txt and push             │ (live tail of the session's pane)
-
-enter open · s switch lead CLI · n new task   ↑↓ move · q leave
+┌ AgentShiftboard ────────────────┬──────────────────────────────────────┐
+│ ● 1 running  ◐ 1 need you       │                                      │
+│                                 │   the selected session's lead (or a  │
+│ ● #4 README + goodbye.txt  3/5  │   worker) runs here; type directly   │
+│    ✓ Create goodbye.txt         │                                      │
+│    ◎ Write README.md   codex    │                                      │
+│    ● Commit 3 files             │                                      │
+│    ○ Push to origin             │                                      │
+│    ! approval P-2 git push …    │                                      │
+│ ■ #1 Create hello.txt  2/2      │                                      │
+│ ─────────────────────────────── │                                      │
+│ Agents: claude lead ● · codex … │                                      │
+└─────────────────────────────────┴──────────────────────────────────────┘
+ Shift+← list · Shift+→ session · Ctrl+Q leave
 ```
 
 The workspace is one tmux session per project on AgentShiftboard's own server (D-14, D-15). Its `home` window is this list; every lead and worker runs in its own window. `Enter` opens a session full screen and `Ctrl+Q` returns to the list. The first run with no open task goes straight into a new lead. When a lead's CLI exits, its window offers resume, switching to another CLI, a new task, or another task. The list shows waiting-for-approval and native prompts, cooldown/reset information when known, stale-brief flags, proposed rules and delegations, held locks, and the lead lease state, and distinguishes task state from session status.

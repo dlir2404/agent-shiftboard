@@ -47,6 +47,7 @@ var (
 	AssignmentStatus = Set{"assignment status", []string{
 		"assigned", "running", "submitted", "accepted", "rejected", "cancelled",
 	}}
+	ItemStatus       = Set{"item status", []string{"pending", "in_progress", "review", "done", "blocked", "cancelled"}}
 	DelegationStatus = Set{"delegation status", []string{"proposed", "active", "expired", "revoked"}}
 	EffectStatus     = Set{"side-effect status", []string{
 		"planned", "in_flight", "confirmed", "failed", "not_performed", "unknown",

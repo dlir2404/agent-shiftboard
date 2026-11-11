@@ -63,6 +63,9 @@ func Handle(ctx context.Context, c *coord.Coordinator, provider string, actor co
 		report(stderr, c.Observe(ctx, actor, sid, obs.Status, obs.Reason, "hook"))
 	}
 
+	if in.HookEventName == "PostToolUse" {
+		mirrorTodos(ctx, c, actor, in, stderr)
+	}
 	switch in.HookEventName {
 	case "PreToolUse":
 		if reason := enforceIntent(ctx, c, sid, in); reason != "" {
@@ -290,4 +293,19 @@ func submittedWork(ctx context.Context, c *coord.Coordinator, sid string) string
 		return ""
 	}
 	return "AgentShiftboard: worker results waiting for your review (accept with `agent-shiftboard assignment accept <A-id>` or reject with --reason):\n" + strings.Join(lines, "\n")
+}
+
+// mirrorTodos turns the agent's own todo/plan tool calls into work items.
+func mirrorTodos(ctx context.Context, c *coord.Coordinator, actor coord.Actor, in adapter.HookInput, stderr io.Writer) {
+	full, isFull, one := adapter.TodoCall(in)
+	switch {
+	case isFull:
+		todos := make([]coord.TodoEntry, len(full))
+		for i, t := range full {
+			todos[i] = coord.TodoEntry{ExtID: t.ExtID, Text: t.Text, Status: t.Status}
+		}
+		report(stderr, c.SyncTodos(ctx, actor, todos))
+	case one != nil:
+		report(stderr, c.UpsertTodo(ctx, actor, coord.TodoEntry{ExtID: one.ExtID, Text: one.Text, Status: one.Status}))
+	}
 }

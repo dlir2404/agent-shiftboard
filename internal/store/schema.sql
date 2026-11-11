@@ -219,3 +219,19 @@ CREATE TABLE IF NOT EXISTS events (
   kind    TEXT NOT NULL,
   detail  TEXT NOT NULL DEFAULT ''
 );
+
+-- Small work items inside a task (shown to the user as a "session"):
+-- mirrored from an agent's own todo/plan tool, recorded explicitly, or
+-- created from an assignment.
+CREATE TABLE IF NOT EXISTS items (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id    INTEGER NOT NULL REFERENCES tasks(id),
+  text       TEXT NOT NULL,
+  status     TEXT NOT NULL,
+  owner      TEXT NOT NULL DEFAULT '',  -- e.g. "claude lead", "codex worker"
+  source     TEXT NOT NULL DEFAULT '',  -- todo:<session> | agent | assignment:A-n
+  ext_id     TEXT NOT NULL DEFAULT '',  -- the item's ID in the agent's own todo tool
+  position   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);

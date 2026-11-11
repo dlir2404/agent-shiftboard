@@ -299,6 +299,27 @@ func (r registrar) register() {
 		}
 		return ok("described"), c.DescribeTask(ctx, a, id, in.Title, in.Goal)
 	})
+	add(r, "item_list", "List the session's work items.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in Task) (any, error) {
+		id, err := task(ctx, c, a, in.Task)
+		if err != nil {
+			return nil, err
+		}
+		return c.ListItems(ctx, id)
+	})
+	add(r, "item_add", "Record a work item (your own todo/plan list is mirrored automatically; use this for anything else).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		Text   string `json:"text"`
+		Status string `json:"status,omitempty" jsonschema:"pending, in_progress, review, done, blocked, cancelled"`
+		Owner  string `json:"owner,omitempty"`
+	}) (any, error) {
+		return c.AddItem(ctx, a, 0, in.Text, in.Status, in.Owner)
+	})
+	add(r, "item_set", "Change a work item's status (and optionally its text).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		ID
+		Status string `json:"status"`
+		Text   string `json:"text,omitempty"`
+	}) (any, error) {
+		return ok(in.ID.ID + " updated"), c.SetItem(ctx, a, strings.ToUpper(in.ID.ID), in.Status, in.Text)
+	})
 	add(r, "config_set", "Set a shared non-secret config value (project scope).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		Name        string `json:"name"`
 		Value       string `json:"value"`

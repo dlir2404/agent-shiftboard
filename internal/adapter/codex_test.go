@@ -67,3 +67,22 @@ func TestHookCommandShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestTodoCall(t *testing.T) {
+	full, isFull, _ := TodoCall(HookInput{ToolName: "TodoWrite", ToolInput: json.RawMessage(`{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"in_progress"}]}`)})
+	if !isFull || len(full) != 2 || full[0].Status != "done" || full[1].Status != "in_progress" {
+		t.Fatalf("TodoWrite: %+v", full)
+	}
+	full, isFull, _ = TodoCall(HookInput{ToolName: "update_plan", ToolInput: json.RawMessage(`{"plan":[{"step":"x","status":"pending"}]}`)})
+	if !isFull || full[0].Text != "x" || full[0].Status != "pending" {
+		t.Fatalf("update_plan: %+v", full)
+	}
+	_, _, one := TodoCall(HookInput{ToolName: "TaskCreate", ToolInput: json.RawMessage(`{"subject":"run tests"}`), ToolResponse: json.RawMessage(`"Task #12 created successfully: run tests"`)})
+	if one == nil || one.ExtID != "12" || one.Text != "run tests" {
+		t.Fatalf("TaskCreate: %+v", one)
+	}
+	_, _, one = TodoCall(HookInput{ToolName: "TaskUpdate", ToolInput: json.RawMessage(`{"taskId":"12","status":"completed"}`)})
+	if one == nil || one.ExtID != "12" || one.Status != "done" {
+		t.Fatalf("TaskUpdate: %+v", one)
+	}
+}

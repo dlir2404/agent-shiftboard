@@ -87,6 +87,11 @@ type item struct {
 	pane, provider, role, status, reason, observed string
 	assignment                                     *coord.Assignment
 	output                                         string
+	// session (task) rows
+	agents   string // e.g. "claude lead ● idle · codex worker ■ exited"
+	progress string // e.g. "3/5"
+	// work-item rows
+	worker string // worker session ID for an assignment item
 }
 
 type snapshot struct {
@@ -176,62 +181,110 @@ func loadSnapshot(open Opener) snapshot {
 		start := len(s.items)
 		running0, waiting0 := s.running, s.waiting
 		b, _ := c.GetBrief(ctx, t.ID)
-		s.items = append(s.items, item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
-			keys: "→/enter open lead · s switch lead CLI · n new task"})
 		ss, _ := c.ListSessions(ctx, t.ID)
 		as, _ := c.ListAssignments(ctx, t.ID)
-		var lead []item
-		var workers []item
+		items, _ := c.ListItems(ctx, t.ID)
+
+		// Agents: status, live pane, native prompts.
+		type agent struct {
+			s      coord.Session
+			pane   string
+			status string
+			reason string
+		}
+		agents := map[string]*agent{}
+		var chips []string
 		for _, x := range ss {
-			if (x.Status == "stopped" || x.Status == "failed") && x.ID != t.LeadSession && !openAssignment(as, x.ID) {
-				continue
-			}
-			role := x.Role
-			switch x.ID {
-			case t.LeadSession:
-				role = "lead"
-			case t.PendingLead:
-				role = "lead (new)"
-			}
-			it := item{kind: "session", id: x.ID, task: t, pane: x.PaneID, provider: x.Provider, role: role,
-				status: x.Status, reason: x.Reason, observed: x.ObservedAt, depth: 1, keys: "→/enter open · Shift+← comes back"}
-			for i := range as {
-				if as[i].WorkerSession == x.ID {
-					it.assignment = &as[i]
-					it.role = "worker " + as[i].ID
-					if as[i].Status == "submitted" {
-						it.reason = "result submitted · lead reviews it"
-					}
-				}
-			}
+			ag := &agent{s: x, pane: x.PaneID, status: x.Status, reason: x.Reason}
 			gone := x.Status == "stopped" || x.Status == "failed"
 			if gone || x.PaneID == os.Getenv("TMUX_PANE") {
-				it.pane = ""
+				ag.pane = ""
 			}
-			if gone && strings.HasPrefix(role, "lead") {
-				it.keys = "→/enter resume"
-			}
-			if Capture != nil && it.pane != "" {
-				it.output = Capture(it.pane, 40)
-				if p := nativePrompt(it.output); p != "" {
-					it.status, it.reason = "waiting_for_approval", p
-					it.keys = "enter open and answer it"
+			if Capture != nil && ag.pane != "" {
+				if p := nativePrompt(Capture(ag.pane, 40)); p != "" {
+					ag.status, ag.reason = "waiting_for_approval", p
 				}
 			}
-			switch it.status {
+			agents[x.ID] = ag
+			if gone && x.ID != t.LeadSession && x.ID != t.PendingLead && !openAssignment(as, x.ID) {
+				continue
+			}
+			switch ag.status {
 			case "running", "retrying":
 				s.running++
 			case "waiting_for_approval":
 				s.waiting++
 			}
-			if strings.HasPrefix(role, "lead") {
-				lead = append(lead, it)
-			} else {
-				workers = append(workers, it)
+			role := x.Role
+			if x.ID == t.LeadSession || x.ID == t.PendingLead {
+				role = "lead"
+			}
+			chips = append(chips, fmt.Sprintf("%s %s %s", x.Provider, role, statusIcon(ag.status)))
+		}
+		lead := agents[t.LeadSession]
+		if t.PendingLead != "" {
+			lead = agents[t.PendingLead]
+		}
+		row := item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
+			agents: strings.Join(chips, " · "), keys: "→/enter open the lead · s switch lead CLI · n new session"}
+		if lead != nil {
+			row.provider, row.status, row.reason, row.pane, row.observed = lead.s.Provider, lead.status, lead.reason, lead.pane, lead.s.ObservedAt
+			if lead.pane == "" {
+				row.keys = "→/enter resume the lead · s switch lead CLI · n new session"
 			}
 		}
-		s.items = append(s.items, lead...)
-		s.items = append(s.items, workers...)
+		done, total := 0, 0
+		for _, it := range items {
+			if it.Status != "cancelled" {
+				total++
+				if it.Status == "done" {
+					done++
+				}
+			}
+		}
+		if total > 0 {
+			row.progress = fmt.Sprintf("%d/%d", done, total)
+		}
+		s.items = append(s.items, row)
+
+		// Work items: open ones, then the last few done ones.
+		var doneRows []item
+		for _, it := range items {
+			if it.Status == "cancelled" {
+				continue
+			}
+			r := item{kind: "item", id: it.ID, text: it.Text, status: it.Status, role: it.Owner, depth: 1, task: t}
+			if strings.HasPrefix(it.Source, "assignment:") {
+				aid := strings.TrimPrefix(it.Source, "assignment:")
+				for i := range as {
+					if as[i].ID == aid && as[i].WorkerSession != "" {
+						r.assignment, r.worker = &as[i], as[i].WorkerSession
+						if ag := agents[as[i].WorkerSession]; ag != nil {
+							r.pane, r.provider = ag.pane, ag.s.Provider
+							if ag.status == "waiting_for_approval" {
+								r.reason = "needs you: " + ag.reason
+							}
+							if ag.pane != "" {
+								r.keys = "→/enter open the " + ag.s.Provider + " worker"
+							} else if it.Status != "done" {
+								r.keys = "→/enter resume the " + ag.s.Provider + " worker"
+							}
+						}
+					}
+				}
+			}
+			if it.Status == "done" {
+				doneRows = append(doneRows, r)
+				continue
+			}
+			s.items = append(s.items, r)
+		}
+		if len(doneRows) > 3 {
+			s.items = append(s.items, item{kind: "more", id: fmt.Sprintf("more%d", t.ID), text: fmt.Sprintf("✓ %d earlier steps done", len(doneRows)-3), depth: 1, task: t})
+			doneRows = doneRows[len(doneRows)-3:]
+		}
+		s.items = append(s.items, doneRows...)
+
 		wakeLead(ctx, c, t, ss, as)
 		for _, n := range needsYou(ctx, c, t.ID) {
 			if seen[n.kind+n.id] {
@@ -245,7 +298,7 @@ func loadSnapshot(open Opener) snapshot {
 		g := group{rows: append([]item(nil), s.items[start:]...), upd: t.UpdatedAt, score: 2}
 		s.items = s.items[:start]
 		shown := false
-		for _, r := range g.rows[1:] {
+		for _, r := range g.rows {
 			shown = shown || (r.pane != "" && r.pane == s.shown)
 		}
 		switch {
@@ -254,7 +307,11 @@ func loadSnapshot(open Opener) snapshot {
 		case s.running > running0:
 			g.score = 1
 		}
-		g.rows[0].active = g.score < 2 || shown
+		doing := false
+		for _, r := range g.rows {
+			doing = doing || (r.kind == "item" && (r.status == "in_progress" || r.status == "review" || r.status == "blocked"))
+		}
+		g.rows[0].active = g.score < 2 || shown || doing || len(openTasks) == 1
 		if !g.rows[0].active {
 			if up, err := time.Parse(time.RFC3339, t.UpdatedAt); err == nil && time.Since(up) > 72*time.Hour {
 				g.rows[0].old = true
@@ -432,14 +489,43 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "right" || key == "l" {
-		if it.kind != "task" && it.kind != "session" {
+		if it.kind != "task" && it.kind != "session" && it.kind != "item" {
 			return m, nil
 		}
 		key = "enter"
 	}
 	switch {
 	case key == "enter" && it.kind == "task":
+		if it.pane != "" && Focus != nil {
+			pane := it.pane
+			return m, func() tea.Msg {
+				if err := Focus(pane); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{}
+			}
+		}
 		return m, openLead(it.task.ID, "auto", "")
+	case key == "enter" && it.kind == "item":
+		switch {
+		case it.pane != "" && Focus != nil:
+			pane := it.pane
+			return m, func() tea.Msg {
+				if err := Focus(pane); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{}
+			}
+		case it.worker != "" && OpenWorker != nil && it.status != "done":
+			id := it.worker
+			return m, func() tea.Msg {
+				if err := OpenWorker(id); err != nil {
+					return actionMsg{msg: "error: " + err.Error()}
+				}
+				return actionMsg{}
+			}
+		}
+		return m, nil
 	case key == "enter" && it.kind == "session":
 		if it.pane != "" && Focus != nil {
 			pane := it.pane
@@ -633,7 +719,7 @@ func (m model) View() string {
 	b.WriteString(strings.Join(rows, "\n") + "\n")
 	b.WriteString(dim.Render(strings.Repeat("─", w)) + "\n")
 	b.WriteString(detail)
-	foot := dim.Render("● running ○ idle ◐ needs you ■ exited\n↑↓ · →/enter open · space fold · / find · n new task · s switch lead")
+	foot := dim.Render("✓ done ● doing ○ to do ◎ review\n↑↓ · →/enter open · space fold · / find · n new session")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
@@ -657,7 +743,12 @@ func compactDetail(it item, w int) string {
 	switch it.kind {
 	case "task":
 		f := it.brief.Fields
-		b.WriteString(wrap.Render(fmt.Sprintf("%s · lead %s · brief r%d", it.task.Status, leaseStyle(it.task.LeaseState), it.task.BriefRevision)) + "\n")
+		if it.agents != "" {
+			b.WriteString(wrap.Render(title.Render("Agents: ")+it.agents) + "\n")
+		}
+		if it.reason != "" {
+			b.WriteString(wrap.Render(warn.Render("Lead: "+it.reason)) + "\n")
+		}
 		if f.NextAction != "" {
 			b.WriteString(wrap.Render(title.Render("Next: ")+f.NextAction) + "\n")
 		}
@@ -691,6 +782,20 @@ func compactDetail(it item, w int) string {
 				b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
 			}
 		}
+	case "item":
+		st := map[string]string{"pending": "to do", "in_progress": "in progress", "review": "done by the worker, lead reviews", "done": "done", "blocked": "blocked"}[it.status]
+		b.WriteString(wrap.Render(it.text) + "\n")
+		line := st
+		if it.role != "" {
+			line += " · " + it.role
+		}
+		b.WriteString(dim.Render(wrap.Render(line)) + "\n")
+		if it.reason != "" {
+			b.WriteString(warn.Render(wrap.Render(it.reason)) + "\n")
+		}
+		if a := it.assignment; a != nil && a.Result != "" {
+			b.WriteString(wrap.Render(title.Render("Result: ")+a.Result) + "\n")
+		}
 	default:
 		b.WriteString(wrap.Render(it.text) + "\n")
 	}
@@ -706,7 +811,33 @@ func rowText(it item, w int) string {
 	case "older":
 		return " " + dim.Render(it.text)
 	case "task":
-		return " " + trunc(title.Render(it.id)+" "+it.text, w+20)
+		icon := dim.Render("·")
+		if it.provider != "" {
+			icon = statusIcon(it.status)
+		}
+		suffix := ""
+		if it.progress != "" {
+			suffix = " " + dim.Render(it.progress)
+		}
+		if it.reason != "" && it.status == "waiting_for_approval" {
+			suffix += " " + warn.Render("needs you")
+		}
+		return icon + " " + trunc(title.Render(it.id)+" "+it.text, w-lipgloss.Width(suffix)+18) + suffix
+	case "item":
+		owner := ""
+		if it.role != "" && !strings.HasSuffix(it.role, "lead") {
+			owner = " " + dim.Render(strings.TrimSuffix(it.role, " worker"))
+		}
+		if it.reason != "" {
+			owner += " " + warn.Render("needs you")
+		}
+		text := it.text
+		if it.status == "done" {
+			text = dim.Render(text)
+		}
+		return indent + itemIcon(it.status) + " " + trunc(text, w-len(indent)-lipgloss.Width(owner)+8) + owner
+	case "more":
+		return indent + dim.Render(it.text)
 	case "session":
 		label := it.provider + " " + sessionLabel(it)
 		return indent + statusIcon(it.status) + " " + trunc(label, w-len(indent)+20)
@@ -950,4 +1081,18 @@ func (m model) visible() []item {
 		}
 	}
 	return out
+}
+
+func itemIcon(st string) string {
+	switch st {
+	case "done":
+		return good.Render("✓")
+	case "in_progress":
+		return accent.Render("●")
+	case "review":
+		return warn.Render("◎")
+	case "blocked":
+		return bad.Render("!")
+	}
+	return dim.Render("○")
 }

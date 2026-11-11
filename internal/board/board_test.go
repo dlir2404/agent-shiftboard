@@ -40,12 +40,12 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	for _, it := range m.snap.items {
 		kinds = append(kinds, it.kind)
 	}
-	if strings.Join(kinds, ",") != "task,session,approval,rule" {
+	if strings.Join(kinds, ",") != "task,approval,rule" {
 		t.Fatalf("rows: %v", kinds)
 	}
-	m.cursor = 2 // the approval
+	m.cursor = 1 // the approval
 	v := m.View()
-	for _, want := range []string{"AgentShiftboard", "#1", "claude", "lead", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
+	for _, want := range []string{"AgentShiftboard", "#1", "implement cache", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -133,5 +133,40 @@ func TestVisibleFoldsAndFilters(t *testing.T) {
 	m.toggled, m.showOlder, m.filter = nil, false, "ancient"
 	if got := ids(); got != "#1,s4" {
 		t.Fatalf("filter: %s", got)
+	}
+}
+
+func TestSessionRowsShowWorkItems(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "README + goodbye", "")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	lead := coord.Actor{SessionID: sid}
+	_ = c.AckHandoff(ctx, lead, nil)
+	_ = c.SyncTodos(ctx, lead, []coord.TodoEntry{{Text: "create goodbye.txt", Status: "done"}, {Text: "commit files", Status: "in_progress"}})
+	aid, _ := c.CreateAssignment(ctx, lead, coord.AssignmentInput{TaskID: id, Scope: "write README"})
+	_, _ = c.RegisterWorker(ctx, lead, aid, coord.SessionSpec{Provider: "codex"})
+	c.Close()
+
+	m := model{open: open, width: 38, height: 40}
+	m.snap = loadSnapshot(open)
+	var rows []string
+	for _, it := range m.visible() {
+		rows = append(rows, it.kind+":"+it.text)
+	}
+	got := strings.Join(rows, " | ")
+	for _, want := range []string{"task:README + goodbye", "item:commit files", "item:write README", "item:create goodbye.txt"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in %s", want, got)
+		}
+	}
+	if m.snap.items[0].progress != "1/3" || !strings.Contains(m.snap.items[0].agents, "codex worker") {
+		t.Fatalf("session row: %+v", m.snap.items[0])
 	}
 }

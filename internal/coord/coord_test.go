@@ -438,3 +438,38 @@ func TestReplaceDeadWorker(t *testing.T) {
 	ok(t, f.c.Observe(f.ctx, User, w1, "stopped", "host_lost", "process"))
 	must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"}))
 }
+
+func TestItemsFromTodosAssignmentsAndAgents(t *testing.T) {
+	f := newFixture(t)
+	id, lead := f.startLead(t)
+	// Mirror the lead's todo list; a later list updates, adds, and cancels.
+	ok(t, f.c.SyncTodos(f.ctx, lead, []TodoEntry{{Text: "create goodbye.txt", Status: "in_progress"}, {Text: "commit files", Status: "pending"}}))
+	ok(t, f.c.SyncTodos(f.ctx, lead, []TodoEntry{{Text: "create goodbye.txt", Status: "done"}, {Text: "push", Status: "pending"}}))
+	// Explicit item and an assignment item.
+	iid := must(f.c.AddItem(f.ctx, lead, id, "ask the user about commit", "", ""))
+	ok(t, f.c.SetItem(f.ctx, lead, iid, "blocked", ""))
+	aid := must(f.c.CreateAssignment(f.ctx, lead, AssignmentInput{TaskID: id, Scope: "write README"}))
+	wid := must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"}))
+	ok(t, f.c.Observe(f.ctx, Actor{SessionID: wid}, wid, "running", "", "hook"))
+	ok(t, f.c.SubmitAssignment(f.ctx, Actor{SessionID: wid}, aid, "done", ""))
+	// Tool-by-tool todo updates.
+	ok(t, f.c.UpsertTodo(f.ctx, lead, TodoEntry{ExtID: "7", Text: "run tests", Status: "pending"}))
+	ok(t, f.c.UpsertTodo(f.ctx, lead, TodoEntry{ExtID: "7", Status: "done"}))
+
+	got := map[string]string{}
+	owners := map[string]string{}
+	for _, it := range must(f.c.ListItems(f.ctx, id)) {
+		got[it.Text] = it.Status
+		owners[it.Text] = it.Owner
+	}
+	want := map[string]string{"create goodbye.txt": "done", "commit files": "cancelled", "push": "pending",
+		"ask the user about commit": "blocked", "write README": "review", "run tests": "done"}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%q: got %q want %q (all: %v)", k, got[k], v, got)
+		}
+	}
+	if owners["write README"] != "codex worker" || owners["push"] != "claude lead" {
+		t.Fatalf("owners: %v", owners)
+	}
+}
