@@ -480,6 +480,35 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 		if _, err := tx.Exec(`UPDATE sessions SET pane_id='',pid=0 WHERE status IN ('stopped','failed') AND (pane_id!='' OR pid!=0)`); err != nil {
 			return err
 		}
+		// Assignments created before work items existed get their item.
+		arows, err := tx.Query(`SELECT a.id,a.task_id,a.scope,a.status,a.provider FROM assignments a
+		 WHERE NOT EXISTS (SELECT 1 FROM items i WHERE i.task_id=a.task_id AND i.source='assignment:A-'||a.id)`)
+		if err != nil {
+			return err
+		}
+		type miss struct {
+			id, task              int64
+			scope, status, provid string
+		}
+		var missing []miss
+		for arows.Next() {
+			var m miss
+			if err := arows.Scan(&m.id, &m.task, &m.scope, &m.status, &m.provid); err != nil {
+				arows.Close()
+				return err
+			}
+			missing = append(missing, m)
+		}
+		arows.Close()
+		for _, m := range missing {
+			owner := ""
+			if m.provid != "" {
+				owner = m.provid + " worker"
+			}
+			if err := c.syncAssignmentItem(tx, m.task, FormatID("A", m.id), m.scope, m.status, owner); err != nil {
+				return err
+			}
+		}
 		_, err = tx.Exec(`UPDATE pending SET status='expired',resolved_at=? WHERE status='pending' AND expires_at!='' AND expires_at<?`, c.now(), c.now())
 		return err
 	})

@@ -82,6 +82,7 @@ type item struct {
 	task   coord.Task
 	brief  coord.Brief
 	active bool // has running sessions, sessions waiting, or items that need the user
+	needs  bool // something in it waits for the user: always shown expanded
 	old    bool // not updated for a while and nothing active
 	// session rows
 	pane, provider, role, status, reason, observed string
@@ -285,6 +286,38 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		s.items = append(s.items, doneRows...)
 
+		// Agents waiting on the user, and live workers not shown through an
+		// item, get their own rows so they can always be opened.
+		linked := map[string]bool{}
+		for _, r := range s.items[start:] {
+			if r.kind == "item" && r.worker != "" && r.status != "done" {
+				linked[r.worker] = true
+			}
+		}
+		for _, x := range ss {
+			ag := agents[x.ID]
+			if ag == nil || ag.pane == "" {
+				continue
+			}
+			role := x.Role
+			if x.ID == t.LeadSession || x.ID == t.PendingLead {
+				role = "lead"
+			}
+			switch {
+			case ag.status == "waiting_for_approval":
+				what := ag.reason
+				if what == "" {
+					what = "asks for your approval"
+				}
+				s.items = append(s.items, item{kind: "agent", id: x.ID, text: fmt.Sprintf("%s %s %s", x.Provider, role, what),
+					pane: ag.pane, provider: x.Provider, role: role, status: ag.status, depth: 1, task: t,
+					keys: "→/enter open it and answer · Shift+← comes back"})
+			case role == "worker" && !linked[x.ID]:
+				s.items = append(s.items, item{kind: "agent", id: x.ID, text: fmt.Sprintf("%s worker · %s", x.Provider, ag.status),
+					pane: ag.pane, provider: x.Provider, role: role, status: ag.status, depth: 1, task: t,
+					keys: "→/enter open this worker"})
+			}
+		}
 		wakeLead(ctx, c, t, ss, as)
 		for _, n := range needsYou(ctx, c, t.ID) {
 			if seen[n.kind+n.id] {
@@ -312,6 +345,7 @@ func loadSnapshot(open Opener) snapshot {
 			doing = doing || (r.kind == "item" && (r.status == "in_progress" || r.status == "review" || r.status == "blocked"))
 		}
 		g.rows[0].active = g.score < 2 || shown || doing || len(openTasks) == 1
+		g.rows[0].needs = g.score == 0
 		if !g.rows[0].active {
 			if up, err := time.Parse(time.RFC3339, t.UpdatedAt); err == nil && time.Since(up) > 72*time.Hour {
 				g.rows[0].old = true
@@ -489,7 +523,7 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key == "right" || key == "l" {
-		if it.kind != "task" && it.kind != "session" && it.kind != "item" {
+		if it.kind != "task" && it.kind != "session" && it.kind != "item" && it.kind != "agent" {
 			return m, nil
 		}
 		key = "enter"
@@ -506,6 +540,14 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, openLead(it.task.ID, "auto", "")
+	case key == "enter" && it.kind == "agent" && it.pane != "" && Focus != nil:
+		pane := it.pane
+		return m, func() tea.Msg {
+			if err := Focus(pane); err != nil {
+				return actionMsg{msg: "error: " + err.Error()}
+			}
+			return actionMsg{}
+		}
 	case key == "enter" && it.kind == "item":
 		switch {
 		case it.pane != "" && Focus != nil:
@@ -838,6 +880,12 @@ func rowText(it item, w int) string {
 		return indent + itemIcon(it.status) + " " + trunc(text, w-len(indent)-lipgloss.Width(owner)+8) + owner
 	case "more":
 		return indent + dim.Render(it.text)
+	case "agent":
+		text := it.text
+		if it.status == "waiting_for_approval" {
+			text = warn.Render(text)
+		}
+		return indent + statusIcon(it.status) + " " + trunc(text, w-len(indent)+8)
 	case "session":
 		label := it.provider + " " + sessionLabel(it)
 		return indent + statusIcon(it.status) + " " + trunc(label, w-len(indent)+20)
@@ -1019,6 +1067,9 @@ func wakeLead(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coor
 // user's space toggle wins; otherwise tasks with activity, and every task
 // while filtering, are expanded.
 func (m model) expanded(task item) bool {
+	if task.needs {
+		return true
+	}
 	if v, ok := m.toggled[task.task.ID]; ok {
 		return v
 	}
