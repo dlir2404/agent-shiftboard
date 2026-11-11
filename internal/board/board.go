@@ -160,7 +160,7 @@ func loadSnapshot(open Opener) snapshot {
 		var lead []item
 		var workers []item
 		for _, x := range ss {
-			if (x.Status == "stopped" || x.Status == "failed") && x.ID != t.LeadSession {
+			if (x.Status == "stopped" || x.Status == "failed") && x.ID != t.LeadSession && !openAssignment(as, x.ID) {
 				continue
 			}
 			role := x.Role
@@ -176,6 +176,9 @@ func loadSnapshot(open Opener) snapshot {
 				if as[i].WorkerSession == x.ID {
 					it.assignment = &as[i]
 					it.role = "worker " + as[i].ID
+					if as[i].Status == "submitted" {
+						it.reason = "result submitted · lead reviews it"
+					}
 				}
 			}
 			gone := x.Status == "stopped" || x.Status == "failed"
@@ -548,7 +551,9 @@ func rowText(it item, w int) string {
 		return trunc(fmt.Sprintf("%s %s %s", title.Render(it.id), it.text, dim.Render("· "+t.Status)), w+30)
 	case "session":
 		state := it.status
-		if it.reason != "" && it.status == "waiting_for_approval" {
+		if it.assignment != nil && it.assignment.Status == "submitted" {
+			state = good.Render("✓ result submitted")
+		} else if it.reason != "" && it.status == "waiting_for_approval" {
 			state = warn.Render(it.reason)
 		} else {
 			state = dim.Render(state)
@@ -714,4 +719,15 @@ func nativePrompt(screen string) string {
 		return "asks to log in"
 	}
 	return ""
+}
+
+// openAssignment reports whether a worker's assignment still awaits the
+// lead (so the worker stays listed with its result after it exits).
+func openAssignment(as []coord.Assignment, worker string) bool {
+	for _, a := range as {
+		if a.WorkerSession == worker && (a.Status == "assigned" || a.Status == "running" || a.Status == "submitted") {
+			return true
+		}
+	}
+	return false
 }

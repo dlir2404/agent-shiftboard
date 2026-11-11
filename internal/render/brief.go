@@ -240,7 +240,7 @@ func LaunchContext(v View, sessionID string, readback []string) string {
 	b.WriteString(`Working rules:
 - Task state lives in AgentShiftboard. Change it only with agent-shiftboard commands or its MCP tools. The Markdown brief file is read-only.
 - Keep the brief current (brief update --base <revision>): decisions, completed work, next_action, blockers.
-- Before an external or non-idempotent action (git push, deploy, DB write, sending a message, publishing): effect plan, then effect start right before it, then effect finish with evidence.
+- Before an external or non-idempotent action (git push, deploy, DB write, sending a message, publishing): effect plan, then effect start right before it, then effect finish with evidence. agent-shiftboard commands themselves are never side effects; do not wrap them in effects.
 - When the user states a durable rule ("always ask before pushing"), record it with rule add --scope user|project|task --source "user in chat".
 - When a rule or common sense requires the user's approval: open it with pending add --kind approval --target <target> <action>, ask the user in chat, and when they clearly approve, record it with pending record-approval <P-id> --quote "<their words>". Never treat silence or a similar earlier approval as approval.
 - Never ask the user to run agent-shiftboard commands through your shell (for example with "!"): those run as you. The user approves on the AgentShiftboard board (right pane) or simply in chat.
@@ -272,7 +272,7 @@ When you are done, submit a concise result (what you did, where, evidence):
 
 Working rules:
 - Do only this assignment. Do not update the task brief; the lead decides what to accept.
-- Before an external or non-idempotent action (git push, deploy, DB write, sending a message): effect plan, effect start, then effect finish with evidence. Prefer leaving such actions to the lead unless the scope says otherwise.
+- Before an external or non-idempotent action (git push, deploy, DB write, sending a message): effect plan, effect start, then effect finish with evidence. Prefer leaving such actions to the lead unless the scope says otherwise. agent-shiftboard commands themselves (including assignment submit) are never side effects; do not wrap them in effects.
 - Follow the rules in force below. Never write secret values into task state.
 
 `, a.ID)
