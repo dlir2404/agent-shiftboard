@@ -82,7 +82,7 @@ These decisions define AgentShiftboard's product boundaries and explain the main
 
 **Decision:** AgentShiftboard implements its own session runtime instead of depending on or forking Agent Deck. It reuses proven patterns: native CLIs hosted in tmux, hook-first status detection with a pane-content fallback, and pre-assigned native session IDs.
 
-**Why:** The project owner chose to keep the runtime and the state contract under one design rather than inherit another tool's CLI surface, permission defaults (for example its optional dangerous mode for conductors), and provider list. Agent Deck shows in practice that tmux-hosted native CLIs with hook-based status work across several providers. See [LANDSCAPE.md](LANDSCAPE.md) and [REVIEW-2.md](REVIEW-2.md) §1a–1b.
+**Why:** The project owner chose to keep the runtime and the state contract under one design rather than inherit another tool's CLI surface, permission defaults (for example its optional dangerous mode for conductors), and provider list. Agent Deck shows in practice that tmux-hosted native CLIs with hook-based status work across several providers. See [LANDSCAPE.md](LANDSCAPE.md).
 
 **Reference:** [Agent Deck](https://github.com/asheshgoplani/agent-deck) (MIT): `docs/architecture.md`, `docs/status-detection.md`, `docs/session-id-lifecycle.md`.
 
