@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,9 +30,21 @@ func Run(open Opener, taskID int64) error {
 	if !coord.ActorFromEnv().IsUser() {
 		return coord.ErrUserOnly
 	}
-	m := model{open: open, taskID: taskID}
-	_, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
-	return err
+	m := model{open: open, taskID: taskID, pinned: taskID > 0}
+	if exe, err := os.Executable(); err == nil {
+		if st, err := os.Stat(exe); err == nil {
+			m.exe, m.exeMod = exe, st.ModTime()
+		}
+	}
+	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	if err != nil {
+		return err
+	}
+	if fm, ok := final.(model); ok && fm.restart {
+		// A new binary was installed: restart the board with it.
+		return syscall.Exec(fm.exe, os.Args, os.Environ())
+	}
+	return nil
 }
 
 // item is one thing on the board that needs the user.
@@ -54,14 +67,18 @@ type snapshot struct {
 }
 
 type model struct {
-	open   Opener
-	taskID int64
-	snap   snapshot
-	cursor int
-	msg    string
-	width  int
-	height int
-	input  *answerInput
+	open    Opener
+	taskID  int64
+	pinned  bool // the user picked a task with t; otherwise follow the latest
+	exe     string
+	exeMod  time.Time
+	restart bool
+	snap    snapshot
+	cursor  int
+	msg     string
+	width   int
+	height  int
+	input   *answerInput
 }
 
 type answerInput struct {
@@ -101,10 +118,10 @@ func loadSnapshot(open Opener, taskID int64) snapshot {
 		return s
 	}
 	if taskID == 0 {
+		latest := ""
 		for _, t := range s.tasks {
-			if t.Status == "active" || t.Status == "blocked" || t.Status == "queued" {
-				taskID = t.ID
-				break
+			if (t.Status == "active" || t.Status == "blocked" || t.Status == "queued") && t.UpdatedAt > latest {
+				taskID, latest = t.ID, t.UpdatedAt
 			}
 		}
 	}
@@ -194,6 +211,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tickMsg:
+		if m.exe != "" {
+			if st, err := os.Stat(m.exe); err == nil && st.ModTime().After(m.exeMod) {
+				m.restart = true
+				return m, tea.Quit
+			}
+		}
+		if !m.pinned {
+			m.taskID = 0 // follow the most recently active task
+		}
 		return m, tea.Batch(m.load(), tick())
 	case snapMsg:
 		m.snap = snapshot(msg)
@@ -226,7 +252,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "t":
-			m.taskID = nextTask(m.snap.tasks, m.taskID)
+			m.taskID, m.pinned = nextTask(m.snap.tasks, m.taskID), true
 			m.cursor = 0
 			return m, m.load()
 		default:

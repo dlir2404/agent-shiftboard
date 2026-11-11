@@ -29,39 +29,53 @@ import (
 func (a *app) startCmd() *cobra.Command {
 	var task int64
 	var forceNew bool
+	var mode, provider string
 	cmd := &cobra.Command{
 		Use: "start", Short: "Run the lead in this terminal (used by the workspace)", Hidden: true, Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if !coord.ActorFromEnv().IsUser() {
 				return coord.ErrUserOnly
 			}
-			return a.startLoop(cmd.Context(), task, forceNew)
+			if forceNew {
+				mode = "new"
+			}
+			return a.startOnce(cmd.Context(), task, mode, provider)
 		},
 	}
 	cmd.Flags().Int64Var(&task, "task", 0, "task to lead")
 	cmd.Flags().BoolVar(&forceNew, "new", false, "start a new lead session instead of resuming")
+	cmd.Flags().StringVar(&mode, "mode", "auto", "auto | resume | new")
+	cmd.Flags().StringVar(&provider, "provider", "", "provider for a new lead session")
 	return cmd
 }
 
+// startLoop is kept for the no-tmux path; each round re-executes the
+// binary so a long-lived workspace always runs the installed version.
 func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error {
-	in := bufio.NewReader(os.Stdin)
-	provider := ""
 	mode := "auto"
 	if forceNew {
 		mode = "new"
 	}
+	return a.startOnce(ctx, taskID, mode, "")
+}
+
+// startOnce runs the lead once, shows the exit menu, and re-executes
+// `agent-shiftboard start` with the choice. Re-executing (instead of
+// looping in this process) picks up a newly installed binary.
+func (a *app) startOnce(ctx context.Context, taskID int64, mode, provider string) error {
+	in := bufio.NewReader(os.Stdin)
+	if taskID == 0 {
+		id, err := a.defaultTask(ctx)
+		if err != nil {
+			return err
+		}
+		taskID = id
+	}
+	if err := a.runLeadHere(ctx, taskID, mode, provider); err != nil {
+		fmt.Fprintln(a.errOut, "\nerror:", err)
+	}
+	provider = ""
 	for {
-		if taskID == 0 {
-			id, err := a.defaultTask(ctx)
-			if err != nil {
-				return err
-			}
-			taskID = id
-		}
-		if err := a.runLeadHere(ctx, taskID, mode, provider); err != nil {
-			fmt.Fprintln(a.errOut, "\nerror:", err)
-		}
-		provider = ""
 		fmt.Fprint(a.out, "\nThe lead CLI exited. [r] resume · [s] switch lead to another CLI · [n] new task · [t] switch task · [l] fresh lead session · [q] shell: ")
 		line, err := in.ReadString('\n')
 		if err != nil {
@@ -90,14 +104,23 @@ func (a *app) startLoop(ctx context.Context, taskID int64, forceNew bool) error 
 			name = strings.TrimSpace(name)
 			if _, err := adapter.Get(name); err != nil {
 				fmt.Fprintln(a.errOut, err)
-				mode = "resume"
 				continue
 			}
 			provider, mode = name, "new"
 		default:
 			return execShell()
 		}
+		return execSelf("start", "--task", strconv.FormatInt(taskID, 10), "--mode", mode, "--provider", provider)
 	}
+}
+
+// execSelf replaces this process with the currently installed binary.
+func execSelf(args ...string) error {
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(self, append([]string{self}, args...), os.Environ())
 }
 
 // defaultTask continues the most recently updated open task, or creates a

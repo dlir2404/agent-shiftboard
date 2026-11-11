@@ -137,6 +137,9 @@ func (w Workspace) Exists() bool {
 // session was created.
 func (w Workspace) Ensure(mainCommand []string) (bool, error) {
 	if w.Exists() {
+		if ConfigPath != "" {
+			_, _ = w.R.Run("source-file", ConfigPath) // apply config changes from an upgrade
+		}
 		return false, nil
 	}
 	if len(mainCommand) == 0 {
