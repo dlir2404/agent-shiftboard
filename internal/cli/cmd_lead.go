@@ -119,7 +119,7 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 	if err != nil {
 		return err
 	}
-	launch, text, err := writeLaunchContext(ctx, c, id, sid)
+	launch, _, err := writeLaunchContext(ctx, c, id, sid)
 	if err != nil {
 		return err
 	}
@@ -134,12 +134,16 @@ func (a *app) startLead(ctx context.Context, c *coord.Coordinator, actor coord.A
 		return err
 	}
 	spec := a.launchSpec(c, sid, native, provider)
-	spec.LaunchContext, spec.InitialPrompt = text, initialPrompt
+	spec.LaunchContext, spec.InitialPrompt = launch, initialPrompt
 	command, err := adapter.ClaudeLaunch(spec)
 	if err != nil {
 		return err
 	}
-	pane, err := ws.Launch("lead-"+sid[:8], spec.Env(), command)
+	script, err := adapter.WriteScript(spec.SessionDir, "launch.sh", command)
+	if err != nil {
+		return err
+	}
+	pane, err := ws.Launch("lead-"+sid[:8], spec.Env(), []string{"/bin/sh", script})
 	if err != nil {
 		return err
 	}
@@ -221,10 +225,15 @@ func (a *app) resumeLead(ctx context.Context, c *coord.Coordinator, actor coord.
 		return err
 	}
 	spec := a.launchSpec(c, s.ID, s.NativeSessionID, s.Provider)
-	command, err := adapter.ClaudeResume(spec)
+	resumeCmd, err := adapter.ClaudeResume(spec)
 	if err != nil {
 		return err
 	}
+	script, err := adapter.WriteScript(spec.SessionDir, "resume.sh", resumeCmd)
+	if err != nil {
+		return err
+	}
+	command := []string{"/bin/sh", script}
 	if alive, _ := ws.PaneAlive(s.PaneID); s.PaneID != "" && !alive {
 		if err := ws.Respawn(s.PaneID, spec.Env(), command); err == nil {
 			_ = ws.SwapIntoMainIfNeeded(s.PaneID)

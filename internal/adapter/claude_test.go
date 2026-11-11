@@ -2,6 +2,7 @@ package adapter
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ func TestClaudeLaunchCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(cmd, " ")
-	for _, want := range []string{"claude --session-id 3f1c2b9e", "--settings " + dir, "--mcp-config " + dir, "--permission-mode manual", "--append-system-prompt ctx", " ack"} {
+	for _, want := range []string{"claude --session-id 3f1c2b9e", "--settings " + dir, "--mcp-config " + dir, "--permission-mode manual", "--append-system-prompt @file:ctx", " ack"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("missing %q in %s", want, got)
 		}
@@ -54,5 +55,18 @@ func TestResetTime(t *testing.T) {
 	}
 	if _, ok := ResetTime("API Error: Rate limit reached", now); ok {
 		t.Fatal("no reset time expected")
+	}
+}
+
+func TestWriteScriptReadsContextFromFile(t *testing.T) {
+	dir := t.TempDir()
+	p, err := WriteScript(dir, "launch.sh", []string{"claude", "--append-system-prompt", FileArg + "/s/launch.md", "it's go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	want := "exec claude --append-system-prompt \"$(cat /s/launch.md)\" 'it'\\''s go'"
+	if !strings.Contains(string(b), want) {
+		t.Fatalf("script:\n%s\nwant %s", b, want)
 	}
 }
