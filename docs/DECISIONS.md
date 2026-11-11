@@ -175,4 +175,6 @@ These decisions define AgentShiftboard's product boundaries and explain the main
 
 **Why:** In the fifth live test the user said the list was inside out: what they track while building a feature is the many small steps and their status, not which CLI process runs. Mirroring the agents' own todo lists keeps that status current without asking agents for extra bookkeeping; explicit items cover steps outside those lists, such as waiting for the user.
 
+**Amendment (2026-11-11):** with items listed under each session, long checklists pushed other sessions off the list. The list now shows one line per session (lead status, progress, a ◐N badge for things that need the user) with a two- or three-line summary under it. Space on a session opens its actions panel, a floating modal (tmux popup) with a menu on the left and the view on the right: Overview (brief), Checklist (all items), Agents (lead and workers; open or resume), Needs you (approve, deny, answer, confirm), Open the lead, Switch lead CLI.
+
 **Note:** Internally the record is still called a task (`task` commands, `tasks` table) and an agent process a session (`sessions` table); only user-facing wording changed.

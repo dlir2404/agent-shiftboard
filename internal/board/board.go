@@ -41,6 +41,11 @@ var (
 	Providers []string
 	// OpenWorker resumes a worker session whose CLI exited.
 	OpenWorker func(sessionID string) error
+	// Passive skips side effects (reconcile, waking leads, closing
+	// workers) when loading; the action panel sets it.
+	Passive bool
+	// OpenPanel opens the actions panel of a session.
+	OpenPanel func(taskID int64) error
 	// Shown returns the pane on the right of the workspace.
 	Shown func() string
 	// Wake types one line into a session's pane and submits it.
@@ -91,8 +96,10 @@ type item struct {
 	assignment                                     *coord.Assignment
 	output                                         string
 	// session (task) rows
-	agents   string // e.g. "claude lead ● idle · codex worker ■ exited"
-	progress string // e.g. "3/5"
+	agents    string // e.g. "claude lead ● idle · codex worker ■ exited"
+	agentList []item // every relevant agent of the session
+	needCount int    // rows that wait for the user
+	progress  string // e.g. "3/5"
 	// work-item rows
 	worker string // worker session ID for an assignment item
 }
@@ -158,7 +165,7 @@ func loadSnapshot(open Opener) snapshot {
 	if Shown != nil {
 		s.shown = Shown()
 	}
-	if Refresh != nil {
+	if Refresh != nil && !Passive {
 		Refresh(ctx, c)
 	}
 	tasks, err := c.ListTasks(ctx)
@@ -197,6 +204,7 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		agents := map[string]*agent{}
 		var chips []string
+		var agentRows []item
 		for _, x := range ss {
 			ag := &agent{s: x, pane: x.PaneID, status: x.Status, reason: x.Reason}
 			gone := x.Status == "stopped" || x.Status == "failed"
@@ -223,17 +231,42 @@ func loadSnapshot(open Opener) snapshot {
 				role = "lead"
 			}
 			chips = append(chips, fmt.Sprintf("%s %s %s", x.Provider, role, statusIcon(ag.status)))
+			ar := item{kind: "agent", id: x.ID, pane: ag.pane, provider: x.Provider, role: role, status: ag.status,
+				reason: ag.reason, observed: x.ObservedAt, task: t, worker: x.ID}
+			for i := range as {
+				if as[i].WorkerSession == x.ID {
+					ar.assignment = &as[i]
+				}
+			}
+			label := x.Provider + " " + role
+			if ar.assignment != nil {
+				label += " (" + ar.assignment.ID + ")"
+			}
+			ar.text = label
+			switch {
+			case ag.pane != "":
+				ar.keys = "enter open"
+			case gone && role == "lead":
+				ar.keys = "enter resume the lead"
+			case gone:
+				ar.keys = "enter resume this worker"
+			}
+			if role == "lead" {
+				agentRows = append([]item{ar}, agentRows...)
+			} else {
+				agentRows = append(agentRows, ar)
+			}
 		}
 		lead := agents[t.LeadSession]
 		if t.PendingLead != "" {
 			lead = agents[t.PendingLead]
 		}
 		row := item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
-			agents: strings.Join(chips, " · "), keys: "→/enter open the lead · s switch lead CLI · n new session"}
+			agents: strings.Join(chips, " · "), agentList: agentRows, keys: "space actions · →/enter open the lead"}
 		if lead != nil {
 			row.provider, row.status, row.reason, row.pane, row.observed = lead.s.Provider, lead.status, lead.reason, lead.pane, lead.s.ObservedAt
 			if lead.pane == "" {
-				row.keys = "→/enter resume the lead · s switch lead CLI · n new session"
+				row.keys = "space actions · →/enter resume the lead"
 			}
 		}
 		done, total := 0, 0
@@ -282,17 +315,15 @@ func loadSnapshot(open Opener) snapshot {
 			}
 			s.items = append(s.items, r)
 		}
-		if len(doneRows) > 3 {
-			s.items = append(s.items, item{kind: "more", id: fmt.Sprintf("more%d", t.ID), text: fmt.Sprintf("✓ %d earlier steps done", len(doneRows)-3), depth: 1, task: t})
-			doneRows = doneRows[len(doneRows)-3:]
-		}
 		s.items = append(s.items, doneRows...)
 
 		live := map[string]liveAgent{}
 		for id, ag := range agents {
 			live[id] = liveAgent{pane: ag.pane, status: ag.status}
 		}
-		closeDoneWorkers(ctx, c, ss, as, live)
+		if !Passive {
+			closeDoneWorkers(ctx, c, ss, as, live)
+		}
 		// Agents waiting on the user, and live workers not shown through an
 		// item, get their own rows so they can always be opened.
 		linked := map[string]bool{}
@@ -325,7 +356,9 @@ func loadSnapshot(open Opener) snapshot {
 					keys: "→/enter open this worker"})
 			}
 		}
-		wakeLead(ctx, c, t, ss, as)
+		if !Passive {
+			wakeLead(ctx, c, t, ss, as)
+		}
 		for _, n := range needsYou(ctx, c, t.ID) {
 			if seen[n.kind+n.id] {
 				continue
@@ -336,6 +369,11 @@ func loadSnapshot(open Opener) snapshot {
 			s.waiting++
 		}
 		g := group{rows: append([]item(nil), s.items[start:]...), upd: t.UpdatedAt, score: 2}
+		for _, r := range g.rows[1:] {
+			if (r.kind != "item" && r.kind != "more" && r.kind != "agent") || (r.kind == "agent" && r.status == "waiting_for_approval") {
+				g.rows[0].needCount++
+			}
+		}
 		s.items = s.items[:start]
 		shown := false
 		for _, r := range g.rows {
@@ -495,10 +533,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "older":
 					m.showOlder = !m.showOlder
 				case "task":
-					if m.toggled == nil {
-						m.toggled = map[int64]bool{}
+					if OpenPanel == nil {
+						m.msg = "the actions panel needs the tmux workspace"
+						break
 					}
-					m.toggled[it.task.ID] = !m.expanded(it)
+					id := it.task.ID
+					return m, func() tea.Msg {
+						if err := OpenPanel(id); err != nil {
+							return actionMsg{msg: "error: " + err.Error()}
+						}
+						return actionMsg{}
+					}
 				}
 			}
 		case "n":
@@ -675,6 +720,16 @@ func (m model) selected() (item, bool) {
 }
 
 func (m model) act(it item, key string) tea.Cmd {
+	fn, done := actFn(it, key)
+	if fn == nil {
+		return nil
+	}
+	open := m.open
+	return func() tea.Msg { return actionMsg{msg: runAction(open, fn, done)} }
+}
+
+// actFn maps a key on a row that needs the user to a user operation.
+func actFn(it item, key string) (func(ctx context.Context, c *coord.Coordinator) error, string) {
 	var fn func(ctx context.Context, c *coord.Coordinator) error
 	var done string
 	u := coord.User
@@ -695,11 +750,8 @@ func (m model) act(it item, key string) tea.Cmd {
 		fn, done = func(ctx context.Context, c *coord.Coordinator) error { return c.ReviewDecisions(ctx, u, it.id) }, it.id+" reviewed"
 	case it.kind == "lock" && key == "b":
 		fn, done = func(ctx context.Context, c *coord.Coordinator) error { return c.BreakLock(ctx, u, it.id) }, "lock "+it.id+" broken"
-	default:
-		return nil
 	}
-	open := m.open
-	return func() tea.Msg { return actionMsg{msg: runAction(open, fn, done)} }
+	return fn, done
 }
 
 func runAction(open Opener, fn func(ctx context.Context, c *coord.Coordinator) error, done string) string {
@@ -748,7 +800,7 @@ func (m model) View() string {
 		head = append(head, accent.Render("/"+m.filter)+dim.Render("  esc clears"))
 	}
 
-	foot := dim.Render("✓ done ● doing ○ to do ◎ review\n↑↓ · →/enter open · space fold · / find · n new session")
+	foot := dim.Render("↑↓ · space actions · →/enter open lead\n/ find · n new session")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id
 		if m.input.purpose == "provider" {
@@ -822,26 +874,15 @@ func compactDetail(it item, w int) string {
 		if it.reason != "" {
 			b.WriteString(wrap.Render(warn.Render("Lead: "+it.reason)) + "\n")
 		}
+		if it.needCount > 0 {
+			b.WriteString(warn.Render(fmt.Sprintf("%d thing(s) need you", it.needCount)) + "\n")
+		}
 		if f.NextAction != "" {
-			b.WriteString(wrap.Render(title.Render("Next: ")+f.NextAction) + "\n")
-		}
-		for _, x := range f.Blockers {
-			b.WriteString(wrap.Render(warn.Render("Blocked: ")+x) + "\n")
-		}
-		if f.Goal != "" {
-			b.WriteString(wrap.Render(title.Render("Goal: ")+f.Goal) + "\n")
-		}
-		if len(f.Completed) > 0 {
-			b.WriteString(title.Render("Done") + "\n")
-			for _, x := range lastN(f.Completed, 4) {
-				b.WriteString(wrap.Render("• "+x) + "\n")
+			next := strings.Split(wrap.Render(title.Render("Next: ")+f.NextAction), "\n")
+			if len(next) > 3 {
+				next = append(next[:2], dim.Render("…"))
 			}
-		}
-		if len(f.Decisions) > 0 {
-			b.WriteString(title.Render("Decisions") + "\n")
-			for _, x := range lastN(f.Decisions, 4) {
-				b.WriteString(wrap.Render("• "+x) + "\n")
-			}
+			b.WriteString(strings.Join(next, "\n") + "\n")
 		}
 	case "session":
 		st := it.status
@@ -892,8 +933,10 @@ func rowText(it item, w int) string {
 		if it.progress != "" {
 			suffix = " " + dim.Render(it.progress)
 		}
-		if it.reason != "" && it.status == "waiting_for_approval" {
-			suffix += " " + warn.Render("needs you")
+		if it.needCount > 0 {
+			suffix += " " + warn.Render(fmt.Sprintf("◐%d", it.needCount))
+		} else if it.reason != "" && it.status == "waiting_for_approval" {
+			suffix += " " + warn.Render("◐")
 		}
 		return icon + " " + trunc(title.Render(it.id)+" "+it.text, w-lipgloss.Width(suffix)+18) + suffix
 	case "item":
@@ -1134,12 +1177,7 @@ func (m model) visible() []item {
 				continue
 			}
 		}
-		group := []item{task}
-		if m.expanded(task) {
-			group = append(group, children...)
-		} else if len(children) > 0 {
-			group[0].text += dim.Render(fmt.Sprintf(" (+%d)", len(children)))
-		}
+		group := []item{task} // details live in the actions panel
 		if task.old && f == "" {
 			older = append(older, group...)
 			continue

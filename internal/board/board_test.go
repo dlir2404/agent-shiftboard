@@ -43,17 +43,18 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 	if strings.Join(kinds, ",") != "task,approval,rule" {
 		t.Fatalf("rows: %v", kinds)
 	}
-	m.cursor = 1 // the approval
+	if vis := m.visible(); len(vis) != 1 || vis[0].needCount != 2 {
+		t.Fatalf("list should show one session with 2 things that need the user: %+v", vis)
+	}
 	v := m.View()
-	for _, want := range []string{"AgentShiftboard", "#1", "implement cache", "▶", "approval", "P-1", "rule", "R-1", "a approve"} {
+	for _, want := range []string{"AgentShiftboard", "#1", "implement cache", "▶", "◐2", "space actions"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
 	}
-	// Approve through the board's action path.
-	it, _ := m.selected()
-	msg := m.act(it, "a")()
-	if !strings.Contains(msg.(actionMsg).msg, "approved") {
+	// Approve through the action mapping used by the list and the panel.
+	fn, done := actFn(m.snap.items[1], "a")
+	if msg := runAction(open, fn, done); !strings.Contains(msg, "approved") {
 		t.Fatalf("action: %v", msg)
 	}
 }
@@ -122,16 +123,16 @@ func TestVisibleFoldsAndFilters(t *testing.T) {
 		}
 		return strings.Join(out, ",")
 	}
-	if got := ids(); got != "#4,s1,s2,#2,older" {
+	if got := ids(); got != "#4,#2,older" {
 		t.Fatalf("default: %s", got)
 	}
 	m.toggled = map[int64]bool{2: true}
 	m.showOlder = true
-	if got := ids(); got != "#4,s1,s2,#2,s3,older,#1" {
+	if got := ids(); got != "#4,#2,older,#1" {
 		t.Fatalf("expanded: %s", got)
 	}
 	m.toggled, m.showOlder, m.filter = nil, false, "ancient"
-	if got := ids(); got != "#1,s4" {
+	if got := ids(); got != "#1" {
 		t.Fatalf("filter: %s", got)
 	}
 }
@@ -157,7 +158,7 @@ func TestSessionRowsShowWorkItems(t *testing.T) {
 	m := model{open: open, width: 38, height: 40}
 	m.snap = loadSnapshot(open)
 	var rows []string
-	for _, it := range m.visible() {
+	for _, it := range m.snap.items {
 		rows = append(rows, it.kind+":"+it.text)
 	}
 	got := strings.Join(rows, " | ")
@@ -227,5 +228,39 @@ func TestViewFitsHeight(t *testing.T) {
 	}
 	if !strings.Contains(v, "AgentShiftboard") || !strings.Contains(v, "#4") {
 		t.Fatalf("top of the list scrolled away:\n%s", v)
+	}
+}
+
+func TestPanelViews(t *testing.T) {
+	p := panel{width: 100, height: 30,
+		row: item{kind: "task", id: "#4", text: "README", agents: "claude lead ○", progress: "1/2",
+			agentList: []item{{kind: "agent", text: "claude lead", role: "lead", status: "idle"}},
+			brief: coord.Brief{Fields: coord.BriefFields{Goal: "write docs", NextAction: "ask the user"}}},
+		kids: []item{
+			{kind: "item", text: "write README", status: "done", role: "codex worker"},
+			{kind: "item", text: "commit", status: "in_progress", role: "claude lead"},
+			{kind: "approval", id: "P-2", text: "git push on origin main", keys: "a approve · x deny"},
+		}}
+	v := p.View()
+	for _, want := range []string{"#4 README", "Overview", "Checklist", "Needs you", "Goal:", "write docs"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("overview missing %q:\n%s", want, v)
+		}
+	}
+	m, _ := p.onKey("down") // Checklist
+	p = m.(panel)
+	m, _ = p.onKey("enter")
+	p = m.(panel)
+	if v := p.View(); !strings.Contains(v, "write README") || !strings.Contains(v, "commit") {
+		t.Fatalf("checklist:\n%s", v)
+	}
+	m, _ = p.onKey("left")
+	p = m.(panel)
+	m, _ = p.onKey("down") // Agents
+	p = m.(panel)
+	m, _ = p.onKey("down") // Needs you
+	p = m.(panel)
+	if p.count("Needs you") != 1 || !strings.Contains(p.View(), "P-2") {
+		t.Fatalf("needs you:\n%s", p.View())
 	}
 }
