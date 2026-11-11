@@ -97,9 +97,9 @@ func (c *Coordinator) ListPending(ctx context.Context, taskID int64, openOnly bo
 }
 
 type pendingRow struct {
-	TaskID              int64
+	TaskID               int64
 	Kind, Action, Target string
-	Status, ExpiresAt   string
+	Status, ExpiresAt    string
 }
 
 func (c *Coordinator) loadPending(tx *sql.Tx, n int64) (pendingRow, error) {

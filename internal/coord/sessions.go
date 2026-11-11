@@ -414,9 +414,9 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 			return err
 		}
 		type pend struct {
-			task             int64
-			holder, pending  string
-			updated          string
+			task            int64
+			holder, pending string
+			updated         string
 		}
 		var pl []pend
 		for lrows.Next() {
