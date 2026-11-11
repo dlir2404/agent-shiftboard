@@ -47,7 +47,7 @@ func (a *app) initCmd() *cobra.Command {
 // initProject creates the state directory, sample policy, and database.
 func initProject(root string) error {
 	dir := paths.StateDir(root)
-	for _, d := range []string{dir, filepath.Join(dir, "tasks"), filepath.Join(dir, "tools")} {
+	for _, d := range []string{dir, filepath.Join(dir, "tools")} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
 			return err
 		}

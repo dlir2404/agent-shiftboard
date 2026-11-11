@@ -152,7 +152,7 @@ func (a *app) defaultProvider(c *coord.Coordinator) string {
 }
 
 func sessionDir(root, sid string) string {
-	return filepath.Join(paths.StateDir(root), "sessions", sid)
+	return filepath.Join(paths.RuntimeDir(root), "sessions", sid)
 }
 
 func (a *app) launchSpec(c *coord.Coordinator, sid, native, provider string) adapter.LaunchSpec {

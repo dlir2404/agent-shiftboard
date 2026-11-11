@@ -225,7 +225,7 @@ func firstLine(s string) string {
 
 // BriefPath is where the rendered brief for a task is written.
 func BriefPath(root string, taskID int64) string {
-	return filepath.Join(paths.StateDir(root), "tasks", fmt.Sprint(taskID), "brief.md")
+	return filepath.Join(paths.RuntimeDir(root), "tasks", fmt.Sprint(taskID), "brief.md")
 }
 
 // WriteBrief renders and writes the brief file for a task.

@@ -26,7 +26,7 @@ An approval the user gives in the conversation may be recorded by the lead with 
 
 This split prevents accidental self-approval. It is not a security boundary against a deliberately hostile process running as the same OS user, which could, for example, unset the environment variable.
 
-The Markdown brief under `.agent-shiftboard/` is a rendered, read-only view for people and agents. Edits to that file have no effect and are overwritten on the next render. Declarative manifests for shared resources are applied explicitly with `agent-shiftboard apply` (see [Shared resources](#shared-resources-config-secret-references-and-tools)).
+The Markdown brief (`agent-shiftboard brief show`; also rendered to a file in the machine-local runtime directory outside the repository) is a read-only view for people and agents. Edits to that file have no effect and are overwritten on the next render. Declarative manifests for shared resources are applied explicitly with `agent-shiftboard apply` (see [Shared resources](#shared-resources-config-secret-references-and-tools)).
 
 ## State layers
 

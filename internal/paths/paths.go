@@ -2,6 +2,8 @@
 package paths
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -71,4 +73,23 @@ func UserDB() (string, error) {
 func isDir(p string) bool {
 	st, err := os.Stat(p)
 	return err == nil && st.IsDir()
+}
+
+// RuntimeDir holds generated, machine-local files for a project (launch
+// scripts, launch contexts, per-session CLI settings, rendered briefs)
+// outside the repository, so agent CLIs do not show them as file changes.
+// AGENT_SHIFTBOARD_RUNTIME_DIR overrides the base directory.
+func RuntimeDir(root string) string {
+	base := os.Getenv("AGENT_SHIFTBOARD_RUNTIME_DIR")
+	if base == "" {
+		if d := os.Getenv("XDG_STATE_HOME"); d != "" {
+			base = filepath.Join(d, "agent-shiftboard")
+		} else if home, err := os.UserHomeDir(); err == nil {
+			base = filepath.Join(home, ".local", "state", "agent-shiftboard")
+		} else {
+			base = filepath.Join(os.TempDir(), "agent-shiftboard")
+		}
+	}
+	sum := sha1.Sum([]byte(root))
+	return filepath.Join(base, filepath.Base(root)+"-"+hex.EncodeToString(sum[:])[:8])
 }
