@@ -8,6 +8,7 @@
 ![platform: macOS](https://img.shields.io/badge/platform-macOS-lightgrey)
 ![go 1.27+](https://img.shields.io/badge/go-1.27%2B-00ADD8)
 ![agents: Claude Code · Codex](https://img.shields.io/badge/agents-Claude%20Code%20%C2%B7%20Codex-blueviolet)
+[![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 [About](#about) · [Why](#why-agentshiftboard) · [Install](#platforms-and-installation) · [Quick start](#quick-start) · [How it works](#how-it-works) · [Docs](docs/)
 
@@ -171,6 +172,12 @@ Issues and pull requests are welcome. Before changing architecture or persistenc
 go build ./... && go vet ./... && go test ./...
 ```
 
+## Security
+
+Please report vulnerabilities privately through [GitHub security advisories](https://github.com/dlir2404/agent-shiftboard/security/advisories/new) rather than public issues.
+
 ## License
 
-No license has been chosen yet. Until one is added, all rights are reserved by the author.
+Copyright 2026 dlir2404.
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Contributions are accepted under the same license.
