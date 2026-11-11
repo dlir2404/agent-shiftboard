@@ -58,7 +58,7 @@ func (a *app) rootCmd() *cobra.Command {
 		a.pendingCmd(), a.delegationCmd(), a.effectCmd(), a.milestoneCmd(),
 		a.delegateCmd(), a.assignmentCmd(), a.handoffCmd(), a.sessionCmd(),
 		a.configCmd(), a.secretCmd(), a.toolCmd(), a.getCmd(), a.applyCmd(), a.lockCmd(),
-		a.sweepCmd(), a.mcpCmd(), a.leadCmd(),
+		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(),
 	)
 	return root
 }
