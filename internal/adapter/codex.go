@@ -56,7 +56,7 @@ func CodexConfigOverrides(s LaunchSpec) []string {
 		"-c", "mcp_servers.agent_shiftboard.args=[\"mcp\"]",
 		"-c", "mcp_servers.agent_shiftboard.cwd=" + tomlString(s.Root),
 		"-c", "mcp_servers.agent_shiftboard.env={\"AGENT_SHIFTBOARD_SESSION_ID\"=" + tomlString(s.SessionID) + ",\"AGENT_SHIFTBOARD_PROJECT\"=" + tomlString(s.Root) + "}",
-		"-c", "mcp_servers.agent_shiftboard.default_tools_approval_mode=\"auto\"",
+		"-c", "mcp_servers.agent_shiftboard.default_tools_approval_mode=\"approve\"",
 		"-c", "mcp_servers.agent_shiftboard.enabled_tools=" + tomlStringArray(codexAgentShiftboardTools),
 	}
 	for _, hook := range codexHookEvents {

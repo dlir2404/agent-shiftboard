@@ -17,7 +17,7 @@ func TestCodexLaunchAndResume(t *testing.T) {
 	for _, want := range []string{
 		"codex -C /p",
 		`mcp_servers.agent_shiftboard.command="/bin/agent-shiftboard"`,
-		`mcp_servers.agent_shiftboard.default_tools_approval_mode="auto"`,
+		`mcp_servers.agent_shiftboard.default_tools_approval_mode="approve"`,
 		`hooks.PreToolUse=[{matcher=".*",hooks=[{type="command",command="/bin/agent-shiftboard hook codex PreToolUse"`,
 		`hooks.SessionStart=`, `hooks.Stop=`, `hooks.PermissionRequest=`,
 		"/p/launch.md",
