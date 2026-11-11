@@ -5,3 +5,6 @@
 /bin/
 /dist/
 coverage.out
+
+# Local working notes (review input from private projects); not published
+docs/internal/
