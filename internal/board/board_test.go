@@ -96,11 +96,65 @@ func TestCompletedTaskKeepsLiveLeadVisible(t *testing.T) {
 	if len(m.snap.items) == 0 || m.snap.items[0].task.ID != id || m.snap.items[0].pane != "%9" {
 		t.Fatalf("completed task with live lead disappeared: %+v", m.snap.items)
 	}
-	if !strings.Contains(m.snap.items[0].agents, "codex lead") {
+	if !strings.Contains(m.snap.items[0].agents, "codex former lead") {
 		t.Fatalf("missing agent details: %+v", m.snap.items[0])
 	}
 	if !strings.Contains(m.View(), "orientation") {
 		t.Fatal("completed task missing from board")
+	}
+	if v := m.View(); strings.Contains(v, "NO CURRENT LEAD") || strings.Contains(v, "no lead") {
+		t.Fatalf("a completed session needs no lead:\n%s", v)
+	}
+}
+
+func TestReopenedTaskShowsVacantLeadAndFormerSession(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, err := open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.CreateTask(ctx, coord.User, "repo improvements", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sid, err := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lead := coord.Actor{SessionID: sid}
+	if err := c.AckHandoff(ctx, lead, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetSessionRuntime(ctx, sid, "%9", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.CloseTask(ctx, lead, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReopenTask(ctx, coord.User, id); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	m := model{open: open, width: 42, height: 40}
+	m.snap = loadSnapshot(open)
+	if len(m.snap.items) == 0 || m.snap.items[0].pane != "" || m.snap.items[0].task.LeaseState != "vacant" {
+		t.Fatalf("reopened task should not point to former lead: %+v", m.snap.items)
+	}
+	if len(m.snap.items[0].agentList) != 1 || m.snap.items[0].agentList[0].role != "former lead" {
+		t.Fatalf("former lead mislabeled: %+v", m.snap.items[0].agentList)
+	}
+	view := m.View()
+	for _, want := range []string{"no lead", "NO CURRENT LEAD"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("board missing %q:\n%s", want, view)
+		}
 	}
 }
 
@@ -113,6 +167,9 @@ func TestNativePrompt(t *testing.T) {
 	}
 	if nativePrompt("● wrote README.md") != "" {
 		t.Fatal("false positive")
+	}
+	if nativePrompt("Earlier I said to review /hooks.\n\n• Working on the source code\n\n› Ask Codex to do anything") != "" {
+		t.Fatal("old conversation was mistaken for a current native prompt")
 	}
 }
 

@@ -256,10 +256,7 @@ func loadSnapshot(open Opener) snapshot {
 			case "waiting_for_approval":
 				s.waiting++
 			}
-			role := x.Role
-			if x.ID == t.LeadSession || x.ID == t.PendingLead {
-				role = "lead"
-			}
+			role := agentRole(t, x)
 			chips = append(chips, fmt.Sprintf("%s %s %s", x.Provider, role, statusIcon(ag.status)))
 			ar := item{kind: "agent", id: x.ID, pane: ag.pane, provider: x.Provider, role: role, status: ag.status,
 				reason: ag.reason, observed: x.ObservedAt, task: t, worker: x.ID}
@@ -278,7 +275,7 @@ func loadSnapshot(open Opener) snapshot {
 				ar.keys = "enter open"
 			case gone && role == "lead":
 				ar.keys = "enter resume the lead"
-			case gone:
+			case gone && role == "worker":
 				ar.keys = "enter resume this worker"
 			}
 			if role == "lead" {
@@ -302,6 +299,9 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		row := item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
 			agents: strings.Join(chips, " · "), agentList: agentRows, keys: "space actions · →/enter open the lead"}
+		if needsLead(t) {
+			row.keys = "space actions · →/enter start a new lead"
+		}
 		if t.Status == "done" {
 			row.keys = "space actions · →/enter open the session"
 		}
@@ -379,10 +379,7 @@ func loadSnapshot(open Opener) snapshot {
 			if ag == nil || ag.pane == "" {
 				continue
 			}
-			role := x.Role
-			if x.ID == t.LeadSession || x.ID == t.PendingLead {
-				role = "lead"
-			}
+			role := agentRole(t, x)
 			switch {
 			case ag.status == "waiting_for_approval":
 				what := ag.reason
@@ -454,6 +451,22 @@ func loadSnapshot(open Opener) snapshot {
 	}
 
 	return s
+}
+
+// needsLead reports an open session whose lead seat is empty (for example
+// after it was reopened). A completed session needs no lead.
+func needsLead(t coord.Task) bool {
+	return t.LeaseState == "vacant" && t.Status != "done" && t.Status != "cancelled"
+}
+
+func agentRole(t coord.Task, s coord.Session) string {
+	if s.ID == t.LeadSession || s.ID == t.PendingLead {
+		return "lead"
+	}
+	if s.Role == "lead" {
+		return "former lead"
+	}
+	return s.Role
 }
 
 // needsYou lists what waits for the user, most urgent first.
@@ -958,6 +971,9 @@ func progressBar(progress string) string {
 // agentChips is a compact "claude ● codex ○" line.
 func agentChips(it item) string {
 	var out []string
+	if needsLead(it.task) {
+		out = append(out, warn.Render("no lead"))
+	}
 	for _, a := range it.agentList {
 		out = append(out, dim.Render(a.provider)+" "+statusIcon(a.status))
 	}
@@ -981,6 +997,9 @@ func compactDetail(it item, w int) string {
 			return strings.Join(lines, "\n")
 		}
 		b.WriteString(" " + title.Render(trunc(it.id+" "+it.text, w-2)) + "\n")
+		if needsLead(it.task) {
+			b.WriteString(" " + warn.Render("NO CURRENT LEAD · Enter to start one") + "\n")
+		}
 		if it.reason != "" {
 			b.WriteString(" " + warn.Render(trunc("lead "+it.reason, w-2)) + "\n")
 		}
@@ -1206,7 +1225,21 @@ func trunc(s string, n int) string {
 // visible pane (display only). AgentShiftboard never answers it; it only
 // tells the user that the session waits for them.
 func nativePrompt(screen string) string {
-	low := strings.ToLower(screen)
+	// capture-pane includes old conversation. Only the bottom of the pane can
+	// represent a prompt the CLI is waiting on now.
+	var recent []string
+	for _, line := range strings.Split(screen, "\n") {
+		if strings.TrimSpace(line) != "" {
+			recent = append(recent, line)
+		}
+	}
+	if len(recent) > 12 {
+		recent = recent[len(recent)-12:]
+	}
+	low := strings.ToLower(strings.Join(recent, "\n"))
+	if strings.Contains(low, "ask codex to do anything") {
+		return ""
+	}
 	switch {
 	case strings.Contains(low, "trust this folder") || strings.Contains(low, "trust the files in this folder") || strings.Contains(low, "is this a project you created or one you trust"):
 		return "asks to trust the folder"
