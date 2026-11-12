@@ -45,13 +45,21 @@ var claudeHookEvents = []string{
 // ClaudeSettings builds the per-session settings passed with --settings.
 // Hooks given this way merge with the user's own hooks; the user's
 // settings files are never edited.
-func ClaudeSettings(self string) map[string]any {
+// The session's identity travels in the settings file, not only in the
+// process environment: Claude Code can move a conversation into a new
+// background process (for example `--fork-session --resume`) that keeps
+// the --settings and --mcp-config arguments but not the environment. The
+// "env" block sets the variables for the session's tools, and each hook
+// command names its session itself.
+func ClaudeSettings(s LaunchSpec) map[string]any {
+	self := s.Self
+	prefix := "AGENT_SHIFTBOARD_SESSION_ID=" + shellQuote(s.SessionID) + " AGENT_SHIFTBOARD_PROJECT=" + shellQuote(s.Root) + " "
 	hooks := map[string]any{}
 	for _, ev := range claudeHookEvents {
 		entry := map[string]any{
 			"hooks": []map[string]any{{
 				"type":    "command",
-				"command": shellQuote(self) + " hook claude " + ev,
+				"command": prefix + shellQuote(self) + " hook claude " + ev,
 				"timeout": 10,
 			}},
 		}
@@ -60,7 +68,14 @@ func ClaudeSettings(self string) map[string]any {
 		}
 		hooks[ev] = []map[string]any{entry}
 	}
+	env := map[string]string{}
+	for k, v := range s.Env() {
+		if v != "" {
+			env[k] = v
+		}
+	}
 	return map[string]any{
+		"env":   env,
 		"hooks": hooks,
 		// Read and agent operations only; user operations refuse to run
 		// inside a managed session anyway (D-16).
@@ -102,7 +117,7 @@ func writeJSON(path string, v any) error {
 func (s LaunchSpec) claudeCommon() ([]string, error) {
 	settings := filepath.Join(s.SessionDir, "claude-settings.json")
 	mcp := filepath.Join(s.SessionDir, "claude-mcp.json")
-	if err := writeJSON(settings, ClaudeSettings(s.Self)); err != nil {
+	if err := writeJSON(settings, ClaudeSettings(s)); err != nil {
 		return nil, err
 	}
 	if err := writeJSON(mcp, ClaudeMCPConfig(s)); err != nil {

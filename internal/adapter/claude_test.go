@@ -34,9 +34,12 @@ func TestClaudeLaunchCommand(t *testing.T) {
 }
 
 func TestClaudeSettingsShape(t *testing.T) {
-	b, _ := json.Marshal(ClaudeSettings("/bin/agent-shiftboard"))
+	b, _ := json.Marshal(ClaudeSettings(LaunchSpec{Self: "/bin/agent-shiftboard", SessionID: "s1", Root: "/p"}))
 	s := string(b)
-	for _, want := range []string{`"PreToolUse":[{"hooks":[{"command":"/bin/agent-shiftboard hook claude PreToolUse"`, `"matcher":"*"`, `"StopFailure"`, `"mcp__agent-shiftboard__*"`} {
+	// The session's identity is in the file itself, so a process that loses
+	// the launch environment (a forked Claude session) still reports.
+	for _, want := range []string{`"command":"AGENT_SHIFTBOARD_SESSION_ID=s1 AGENT_SHIFTBOARD_PROJECT=/p /bin/agent-shiftboard hook claude PreToolUse"`,
+		`"env":{"AGENT_SHIFTBOARD_PROJECT":"/p","AGENT_SHIFTBOARD_SESSION_ID":"s1"}`, `"matcher":"*"`, `"StopFailure"`, `"mcp__agent-shiftboard__*"`} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("missing %s in %s", want, s)
 		}

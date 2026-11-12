@@ -125,6 +125,8 @@ These decisions define AgentShiftboard's product boundaries and explain the main
 
 **Why:** Two write paths (file edits and commands) race with revision assignment. Permission prompts on every checkpoint make agents skip checkpoints. CLI plus MCP covers every target provider with the same semantics. Exposing user operations to agents without a prompt would let a lead approve its own request; the split prevents that by accident, though it is not a security boundary against a hostile process running as the same OS user.
 
+**Amendment (2026-11-12, live test):** Claude Code moved a running lead conversation into a background process (`--fork-session --resume`) that kept `--settings` and `--mcp-config` but not the launch environment. Its hooks then reported nothing (the lease was suspended as `unknown`), and its shell commands were treated as the user's, since neither the session variable nor the recorded ancestor process matched. The session's identity now travels in the per-session settings file as well: an `env` block for the session's tools and the variables on each hook command line.
+
 ## D-17 — Detect a stale brief from metadata and nudge the lead
 
 **Decision:** The coordinator flags a stale brief when Git HEAD moved past the recorded revision, too many turns passed since the last revision, or an external-action pattern matched without an intent record. It nudges through a documented hook output channel where available and always shows the flag on the board. It uses only hook/stream metadata and never stores command output or conversation content.
