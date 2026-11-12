@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Runner executes tmux commands; tests replace it.
@@ -300,6 +301,44 @@ func (w Workspace) PaneAlive(pane string) (bool, error) {
 // only for live status classification and is never stored.
 func (w Workspace) Capture(pane string, lines int) (string, error) {
 	return w.R.Run("capture-pane", "-p", "-J", "-t", pane, "-S", fmt.Sprint(-lines))
+}
+
+// submitDelay separates a pasted line from its Enter. CLIs such as Codex
+// treat fast input as a paste and turn an Enter inside it into a newline.
+var submitDelay = 300 * time.Millisecond
+
+// TypeLine pastes one line into a pane as a single bracketed paste, then
+// submits it with a separate Enter.
+func (w Workspace) TypeLine(pane, text string) error {
+	buf := "agent-shiftboard-line-" + strings.TrimPrefix(pane, "%")
+	if _, err := w.R.Run("set-buffer", "-b", buf, text); err != nil {
+		return err
+	}
+	if _, err := w.R.Run("paste-buffer", "-p", "-d", "-b", buf, "-t", pane); err != nil {
+		return err
+	}
+	time.Sleep(submitDelay)
+	_, err := w.R.Run("send-keys", "-t", pane, "Enter")
+	return err
+}
+
+// InputView returns what the board needs to tell whether a CLI's input
+// line is empty: the visible tail with SGR styling, the plain text of the
+// cursor's row, and the cursor column.
+func (w Workspace) InputView(pane string) (screen, cursorLine string, cursorX int, err error) {
+	pos, err := w.R.Run("display-message", "-p", "-t", pane, "#{cursor_x} #{cursor_y}")
+	if err != nil {
+		return "", "", 0, err
+	}
+	var y int
+	if _, err := fmt.Sscanf(pos, "%d %d", &cursorX, &y); err != nil {
+		return "", "", 0, fmt.Errorf("cursor of %s: %q", pane, pos)
+	}
+	if cursorLine, err = w.R.Run("capture-pane", "-p", "-t", pane, "-S", fmt.Sprint(y), "-E", fmt.Sprint(y)); err != nil {
+		return "", "", 0, err
+	}
+	screen, err = w.R.Run("capture-pane", "-p", "-e", "-J", "-t", pane, "-S", "-15")
+	return screen, cursorLine, cursorX, err
 }
 
 // Popup shows a pane's window in a popup, used to view workers.

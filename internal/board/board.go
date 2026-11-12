@@ -15,6 +15,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -40,6 +41,10 @@ var (
 	Leave func()
 	// Capture returns the visible tail of a pane (display only, never stored).
 	Capture func(pane string, lines int) string
+	// InputView returns a pane's styled visible tail, the plain text of the
+	// cursor's row, and the cursor column; used only to tell whether the
+	// CLI's input line is empty (never stored).
+	InputView func(pane string) (screen, cursorLine string, cursorX int, err error)
 	// Providers lists the CLIs a lead can be switched to.
 	Providers []string
 	// OpenWorker resumes a worker session whose CLI exited.
@@ -1314,10 +1319,7 @@ func wakeLead(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coor
 			lead = s
 		}
 	}
-	if lead.PaneID == "" || lead.Status != "idle" || lead.PaneID == os.Getenv("TMUX_PANE") {
-		return
-	}
-	if Capture != nil && nativePrompt(Capture(lead.PaneID, 40)) != "" {
+	if !readyForTyping(lead) {
 		return
 	}
 	for _, a := range as {
@@ -1333,6 +1335,224 @@ func wakeLead(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coor
 		return // one notice per refresh
 	}
 }
+
+// readyForTyping reports whether AgentShiftboard may type one line into a
+// session's pane: it is idle (so never waiting for approval), shows no
+// native prompt, and holds no text the user has started typing.
+func readyForTyping(s coord.Session) bool {
+	if s.PaneID == "" || s.Status != "idle" || s.PaneID == os.Getenv("TMUX_PANE") {
+		return false
+	}
+	// Fail closed: a screen that cannot be read, or one without the CLI's
+	// input line (a dialog, a menu), is not ready.
+	if Capture != nil {
+		screen := Capture(s.PaneID, 40)
+		if strings.TrimSpace(screen) == "" || nativePrompt(screen) != "" {
+			return false
+		}
+	}
+	if InputView != nil {
+		screen, line, x, err := InputView(s.PaneID)
+		if err != nil || !cursorAtEmptyInput(line, x) {
+			return false
+		}
+		if found, typed := inputState(screen); !found || typed {
+			return false
+		}
+	}
+	return true
+}
+
+// cursorAtEmptyInput reports whether the cursor sits right after the
+// input glyph and its space, where an empty input line keeps it. Any text
+// the user typed, on this line or on further lines, moves it.
+func cursorAtEmptyInput(line string, x int) bool {
+	plain := strings.TrimLeft(line, " \u00a0")
+	if !strings.HasPrefix(plain, "❯") && !strings.HasPrefix(plain, "›") {
+		return false
+	}
+	return x == ansiwidth.StringWidth(line)-ansiwidth.StringWidth(plain)+2
+}
+
+// inputState finds the CLI's input box from the provider's own boundaries,
+// not from the draft's text, and reports whether any row of it holds text
+// the user typed, wherever the cursor is. Claude Code draws the box between
+// two border rows; Codex draws its composer on its own background. Text
+// drawn dim (placeholders, suggestions) does not count. Whatever cannot be
+// bounded counts as typed, so the caller does not type into it.
+func inputState(screen string) (found, typed bool) {
+	lines := strings.Split(strings.TrimRight(screen, "\n"), "\n")
+	g := -1
+	for i := len(lines) - 1; i >= 0 && g < 0; i-- {
+		if hasInputGlyph(lines[i]) {
+			g = i
+		}
+	}
+	if g < 0 {
+		return false, false
+	}
+	// The background at each row's first cell; SGR state carries across
+	// rows in a styled capture.
+	rowBG := make([]string, len(lines))
+	var st sgrState
+	var boxBG string
+	for i, l := range lines {
+		if i == g {
+			cut := glyphEnd(l)
+			_, rowBG[i] = scanLine(l[:cut], &st)
+			_, boxBG = scanLine(l[cut:], &st)
+			continue
+		}
+		_, rowBG[i] = scanLine(l, &st)
+	}
+	start, end := -1, -1 // the box is rows [start, end)
+	for i := g - 1; i >= 0 && start < 0; i-- {
+		if claudeBorder(lines[i]) {
+			start = i + 1
+		}
+	}
+	for i := g + 1; i < len(lines) && end < 0; i++ {
+		if claudeBorder(lines[i]) {
+			end = i
+		}
+	}
+	if start < 0 || end < 0 {
+		if boxBG == "" {
+			return true, true // no boundary found
+		}
+		start, end = g, g+1
+		for start > 0 && rowBG[start-1] == boxBG {
+			start--
+		}
+		for end < len(lines) && rowBG[end] == boxBG {
+			end++
+		}
+		if start == 0 || end == len(lines) {
+			return true, true // the composer runs off the capture
+		}
+	}
+	// The real prompt is the box's first glyph row; a glyph pasted into the
+	// draft further down is text like any other.
+	p := -1
+	for i := start; i < end && p < 0; i++ {
+		if hasInputGlyph(lines[i]) {
+			p = i
+		}
+	}
+	if p < 0 {
+		return true, true
+	}
+	st = sgrState{}
+	for i, l := range lines {
+		if i < start || i >= end {
+			scanLine(l, &st)
+			continue
+		}
+		if i == p {
+			cut := glyphEnd(l)
+			scanLine(l[:cut], &st)
+			l = l[cut:]
+		}
+		if t, _ := scanLine(l, &st); t {
+			typed = true
+		}
+	}
+	return true, typed
+}
+
+func hasInputGlyph(line string) bool {
+	plain := strings.TrimLeft(stripANSI(line), " \u00a0")
+	return strings.HasPrefix(plain, "❯") || strings.HasPrefix(plain, "›")
+}
+
+// glyphEnd is the byte offset just past a row's input glyph.
+func glyphEnd(line string) int {
+	at := strings.IndexAny(line, "❯›")
+	_, size := utf8.DecodeRuneInString(line[at:])
+	return at + size
+}
+
+// claudeBorder reports a Claude Code input-box border: a row that starts
+// at column 0 with a run of "─" (the top border may end in a title). Draft
+// rows never start at column 0: the first follows "❯", the rest are
+// indented, so a typed line of "─" is not mistaken for the border.
+func claudeBorder(line string) bool {
+	return strings.HasPrefix(stripANSI(line), strings.Repeat("─", 8))
+}
+
+// sgrState is the part of the terminal style inputState needs.
+type sgrState struct {
+	dim bool
+	bg  string
+}
+
+// scanLine walks one styled line, updating st. It reports whether a
+// visible character is drawn without dim, and the background in effect at
+// the line's first cell.
+func scanLine(s string, st *sgrState) (typed bool, firstBG string) {
+	first := true
+	firstBG = st.bg
+	for i := 0; i < len(s); {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] < 0x40 || s[j] > 0x7e) {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				st.apply(s[i+2 : j])
+			}
+			i = j + 1
+			if first {
+				firstBG = st.bg
+			}
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		i += size
+		if first {
+			firstBG, first = st.bg, false
+		}
+		if r != ' ' && r != '\u00a0' && r != '\t' && !st.dim {
+			typed = true
+		}
+	}
+	return typed, firstBG
+}
+
+// apply applies one SGR parameter list, reading extended colors
+// (38/48/58;5;n and 38/48/58;2;r;g;b) as a unit.
+func (st *sgrState) apply(params string) {
+	ps := strings.Split(params, ";")
+	for k := 0; k < len(ps); k++ {
+		switch p := ps[k]; p {
+		case "", "0":
+			st.dim, st.bg = false, ""
+		case "2":
+			st.dim = true
+		case "22":
+			st.dim = false
+		case "49":
+			st.bg = ""
+		case "38", "48", "58":
+			n := 0
+			if k+1 < len(ps) && ps[k+1] == "5" {
+				n = 2
+			} else if k+1 < len(ps) && ps[k+1] == "2" {
+				n = 4
+			}
+			if p == "48" && k+n < len(ps) {
+				st.bg = strings.Join(ps[k:k+n+1], ";")
+			}
+			k += n
+		default:
+			if len(p) == 2 && p[0] == '4' && p[1] >= '0' && p[1] <= '7' || len(p) == 3 && strings.HasPrefix(p, "10") {
+				st.bg = p
+			}
+		}
+	}
+}
+
+func stripANSI(s string) string { return ansiwidth.Strip(s) }
 
 // expanded reports whether a task row shows its sessions and items: the
 // user's space toggle wins; otherwise tasks with activity, and every task

@@ -86,3 +86,24 @@ func TestSessionNameIsStableAndSafe(t *testing.T) {
 		t.Fatalf("%q %q", a, b)
 	}
 }
+
+func TestTypeLinePastesThenSubmits(t *testing.T) {
+	submitDelay = 0
+	f := &fake{}
+	w := Workspace{R: f}
+	if err := w.TypeLine("%3", "AgentShiftboard M-1 from claude lead: hi"); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range f.calls {
+		got = append(got, strings.Join(c, " "))
+	}
+	want := []string{
+		"set-buffer -b agent-shiftboard-line-3 AgentShiftboard M-1 from claude lead: hi",
+		"paste-buffer -p -d -b agent-shiftboard-line-3 -t %3",
+		"send-keys -t %3 Enter",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls:\n%s", strings.Join(got, "\n"))
+	}
+}

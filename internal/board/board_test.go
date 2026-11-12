@@ -505,3 +505,61 @@ func TestHandoffShowsOneLead(t *testing.T) {
 		t.Fatalf("want one [LEAD] and codex handing off, got %d: %s", n, chips)
 	}
 }
+
+func TestInputState(t *testing.T) {
+	// Captured from live panes (tmux capture-pane -e -J).
+	const (
+		claudeBorder = "\x1b[38;5;244m────────"
+		claudeFooter = "\n\x1b[39m  \x1b[38;5;220m⏵⏵ auto mode on\x1b[38;5;246m (shift+tab to cycle)\x1b[39m"
+		codexTop     = "\x1b[49m  ⚠ 5h limit: 20% left\n\x1b[48;2;49;52;57m\n"
+		codexFooter  = "\n\x1b[49m  \x1b[38;2;246;226;183mGPT-6-Astra high\x1b[38;2;140;142;144m · \x1b[38;2;171;223;167m~/code\x1b[39m"
+	)
+	cases := []struct {
+		name   string
+		screen string
+		want   bool // typed
+	}{
+		{"claude suggestion is dim", "\x1b[38;5;246m\x1b[48;5;237m❯ \x1b[38;5;231mok\x1b[39m\nanswer\n" + claudeBorder + "\n\x1b[39m❯\u00a0\x1b[2mpush đi\x1b[0m\n" + claudeBorder + claudeFooter, false},
+		{"claude empty", claudeBorder + "\n\x1b[39m❯\u00a0\x1b[0m\n" + claudeBorder + claudeFooter, false},
+		{"claude typed", claudeBorder + "\n\x1b[39m❯\u00a0push now\x1b[0m\n" + claudeBorder + claudeFooter, true},
+		{"claude draft, blank line, typed third line", claudeBorder + "\n\x1b[39m❯\u00a0\n\n  third line\n" + claudeBorder + claudeFooter, true},
+		{"codex placeholder", codexTop + "\x1b[1m›\x1b[0m\x1b[48;2;49;52;57m \x1b[2mAsk Codex to do anything\x1b[0m\x1b[48;2;49;52;57m\n" + codexFooter, false},
+		{"codex typed", codexTop + "\x1b[1m›\x1b[0m\x1b[48;2;49;52;57m fix the tests\n" + codexFooter, true},
+		{"codex draft, blank line, typed third line", codexTop + "\x1b[1m›\x1b[0m\x1b[48;2;49;52;57m \n\n  third line\n" + codexFooter, true},
+		{"color 2 is not dim", "\x1b[38;5;2m❯ \x1b[38;2;2;2;2mtyped", true},
+		// From the A-1 review: a pasted glyph or a typed "─" line inside the draft.
+		{"claude draft above a pasted glyph", claudeBorder + "\n\x1b[39m❯\u00a0\n  unfinished\n  › \n" + claudeBorder + claudeFooter, true},
+		{"claude typed box-drawing line", claudeBorder + "\n\x1b[39m❯\u00a0\n  ─\n  unfinished\n" + claudeBorder + claudeFooter, true},
+		{"codex draft above a pasted glyph", codexTop + "\x1b[1m›\x1b[0m\x1b[48;2;49;52;57m unfinished\n  › \n" + codexFooter, true},
+		{"claude top border with a title", "\x1b[38;5;244m──────────── my session ─\n\x1b[39m❯\u00a0\x1b[2mpush đi\x1b[0m\n" + claudeBorder + claudeFooter, false},
+		{"box end not on screen", "\x1b[39m❯\u00a0\x1b[0m\n\n", true},
+	}
+	for _, c := range cases {
+		found, typed := inputState(c.screen)
+		if !found || typed != c.want {
+			t.Errorf("%s: found=%v typed=%v", c.name, found, typed)
+		}
+	}
+	if found, _ := inputState("Thinking…\n  1. Yes  2. No"); found {
+		t.Error("a screen without an input line must not count as found")
+	}
+}
+
+func TestCursorAtEmptyInput(t *testing.T) {
+	for _, c := range []struct {
+		line string
+		x    int
+		want bool
+	}{
+		{"❯ push đi", 2, true}, // dim suggestion: cursor stays at the start
+		{"› Ask Codex to do anything", 2, true},
+		{"❯ push đi", 9, false},
+		{"  ❯ ", 4, true},
+		{"  third line", 12, false},
+		{"", 0, false},
+	} {
+		if got := cursorAtEmptyInput(c.line, c.x); got != c.want {
+			t.Errorf("%q at %d: got %v", c.line, c.x, got)
+		}
+	}
+}

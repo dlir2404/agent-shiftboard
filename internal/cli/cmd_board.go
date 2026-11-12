@@ -98,15 +98,10 @@ func (a *app) wireWorkspace(ctx context.Context) (string, error) {
 	board.Focus = ws.Show
 	board.Shown = func() string { p, _ := ws.Shown(); return p }
 	board.ClosePane = ws.Close
-	board.Wake = func(pane, text string) error {
-		if _, err := ws.R.Run("send-keys", "-t", pane, "-l", text); err != nil {
-			return err
-		}
-		_, err := ws.R.Run("send-keys", "-t", pane, "Enter")
-		return err
-	}
+	board.Wake = ws.TypeLine
 	board.OpenWorker = func(sid string) error { return a.resumeWorker(context.Background(), ws, sid) }
 	board.Capture = func(pane string, lines int) string { return mustOut(ws.Capture(pane, lines)) }
+	board.InputView = ws.InputView
 	board.Leave = func() { _, _ = ws.R.Run("detach-client") }
 	board.OpenLead = func(taskID int64, mode, provider string) error {
 		c, err := a.open(context.Background())
