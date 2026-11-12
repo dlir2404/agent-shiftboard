@@ -95,6 +95,7 @@ Run `agent-shiftboard` again to come back. Sessions keep running when you leave.
 - **Native CLIs, side by side** — slash commands, skills, and each CLI's own permission prompts work as usual.
 - **Sessions with live checklists** — steps mirrored from the agents' own todo and plan tools, plus anything they record explicitly.
 - **Delegation across CLIs** — the lead hands an assignment to a Claude or Codex worker, is notified when the result is in, reviews it; finished workers close themselves.
+- **Messages between sessions** — any session can send a short note to the lead, a worker, or a former lead still open (`message send`, or MCP `shiftboard_message_send`); the board types it in only when that session is idle and you are not typing there.
 - **Lead hand-off** — switch a session's lead to another CLI; the new lead must read back the rules and open items before it can act.
 - **Rules, approvals, delegations** — durable rules by scope, approvals bound to an exact action and target, time-limited delegations you confirm.
 - **Side-effect journal** — pushes, deploys, and other external actions are recorded before and after; unrecorded ones are blocked; outcomes cut off by a crash become `unknown` instead of being repeated.

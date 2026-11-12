@@ -34,6 +34,10 @@ func Open(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := addColumns(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("apply schema: %w", err)
+	}
 	var v string
 	err = db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v)
 	switch {
@@ -51,6 +55,32 @@ func Open(path string) (*sql.DB, error) {
 	}
 	_ = os.Chmod(path, 0o600)
 	return db, nil
+}
+
+// addedColumns lists columns added to a table after it first shipped.
+// CREATE TABLE IF NOT EXISTS leaves an existing table as it was, so they
+// are added here; each is additive with a default, so no version bump.
+var addedColumns = []struct{ table, column, decl string }{
+	{"messages", "claimed_at", "TEXT NOT NULL DEFAULT ''"},
+}
+
+func addColumns(db *sql.DB) error {
+	for _, c := range addedColumns {
+		// Check and add in one write transaction (BEGIN IMMEDIATE), so two
+		// processes opening an old database do not both add the column.
+		err := Tx(context.Background(), db, func(tx *sql.Tx) error {
+			var n int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.column).Scan(&n); err != nil || n > 0 {
+				return err
+			}
+			_, err := tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl))
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Tx runs fn in a short write transaction.

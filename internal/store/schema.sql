@@ -106,6 +106,20 @@ CREATE TABLE IF NOT EXISTS assignments (
   updated_at     TEXT NOT NULL
 );
 
+-- Short notes between sessions of one task ("M-n", D-25). The board
+-- delivers a queued message into the recipient's pane, then clears body.
+CREATE TABLE IF NOT EXISTS messages (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id      INTEGER NOT NULL REFERENCES tasks(id),
+  from_session TEXT NOT NULL DEFAULT '',  -- '' = the user
+  to_session   TEXT NOT NULL,
+  body         TEXT NOT NULL DEFAULT '',
+  status       TEXT NOT NULL,             -- queued | delivered | cancelled
+  created_at   TEXT NOT NULL,
+  claimed_at   TEXT NOT NULL DEFAULT '',  -- a board is typing it in
+  delivered_at TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS side_effects (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id       INTEGER NOT NULL REFERENCES tasks(id),

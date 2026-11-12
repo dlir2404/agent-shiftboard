@@ -403,6 +403,7 @@ func loadSnapshot(open Opener) snapshot {
 		}
 		if !Passive {
 			wakeLead(ctx, c, t, ss, as)
+			relayMessages(ctx, c, t, ss)
 		}
 		for _, n := range needsYou(ctx, c, t.ID) {
 			if seen[n.kind+n.id] {
@@ -1372,6 +1373,47 @@ func cursorAtEmptyInput(line string, x int) bool {
 		return false
 	}
 	return x == ansiwidth.StringWidth(line)-ansiwidth.StringWidth(plain)+2
+}
+
+// relayMessages delivers queued messages (D-25): at most one per recipient
+// per refresh, oldest first, only into a pane that is ready for typing.
+func relayMessages(ctx context.Context, c *coord.Coordinator, t coord.Task, ss []coord.Session) {
+	if Wake == nil {
+		return
+	}
+	ms, err := c.QueuedMessages(ctx, t.ID)
+	if err != nil || len(ms) == 0 {
+		return
+	}
+	byID := map[string]coord.Session{}
+	for _, s := range ss {
+		byID[s.ID] = s
+	}
+	tried := map[string]bool{}
+	for _, m := range ms {
+		s, ok := byID[m.To]
+		if !ok || tried[m.To] {
+			continue
+		}
+		tried[m.To] = true
+		if !readyForTyping(s) {
+			continue
+		}
+		pane := s.PaneID
+		_, _ = c.DeliverMessage(ctx, m.ID, func(x coord.Message) error { return Wake(pane, messageLine(x)) })
+	}
+}
+
+// messageLine is the one line typed into the recipient's CLI.
+func messageLine(m coord.Message) string {
+	if m.From == "" {
+		return fmt.Sprintf("AgentShiftboard %s from the user: %s", m.ID, m.Body)
+	}
+	from := m.From
+	if len(from) > 8 {
+		from = from[:8]
+	}
+	return fmt.Sprintf("AgentShiftboard %s from %s: %s (reply: agent-shiftboard message send %s \"<text>\", or MCP shiftboard_message_send)", m.ID, m.FromLabel, m.Body, from)
 }
 
 // inputState finds the CLI's input box from the provider's own boundaries,

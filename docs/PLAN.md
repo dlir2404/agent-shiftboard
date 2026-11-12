@@ -143,6 +143,12 @@ The storage location is project-scoped and local: a dedicated ignored `.agent-sh
 3. The worker receives the current brief, its assignment, rules in force, and the resource index — not the lead's transcript.
 4. The worker returns a concise result and evidence. The lead accepts or corrects the task state.
 
+### Messaging between sessions
+
+1. Any session of a task sends a short message to another session of the same task (`message send <to> <text>`, MCP `shiftboard_message_send`); `<to>` is `lead`, an assignment ID, a session ID or unique prefix, or a provider name that matches exactly one other open session.
+2. The coordinator queues it as `M-n`. The board delivers it as one typed line, only to an idle pane with no native prompt and never to a session waiting for approval; the body is then cleared (D-25).
+3. The recipient replies the same way. A message never carries user authority.
+
 ### Same-provider continuity
 
 1. After a cooldown with a known reset time, offer wait-and-resume of the same native session within the user's configured threshold.
@@ -250,6 +256,7 @@ Agent operations (CLI subcommands and `agent-shiftboard mcp`; covered by allowli
 - `task new|describe`, `brief update`, `rule add`, `pending add|record-answer|record-approval|withdraw`, `delegation propose|log`.
 - `effect plan|start|finish|reconcile`, `milestone record`.
 - `delegate <task>` (creates an assignment), `assignment submit|accept|reject|cancel`, `handoff ack`.
+- `message send|list|cancel` (short notes between sessions of a task, D-25).
 - `task block|unblock|close`.
 - `config set`, `secret ref add`, `tool register|deprecate`, `lock acquire|release`.
 

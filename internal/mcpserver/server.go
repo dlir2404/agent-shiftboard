@@ -261,6 +261,28 @@ func (r registrar) register() {
 	}) (any, error) {
 		return ok("cancelled"), c.CancelAssignment(ctx, a, strings.ToUpper(in.ID), in.Reason)
 	})
+	add(r, "message_send", "Send a short message (one paragraph, max 500 characters) to another session of your task: to is lead, an assignment ID (A-n), a session ID or prefix, or a provider name. The board types it in when that session is idle. Never carries user approval.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		To   string `json:"to" jsonschema:"lead, A-n, a session ID or prefix, or a provider name such as claude"`
+		Text string `json:"text"`
+		Task int64  `json:"task,omitempty" jsonschema:"task number; omit to use your session's task"`
+	}) (any, error) {
+		return c.SendMessage(ctx, a, in.Task, in.To, in.Text)
+	})
+	add(r, "message_list", "List the sessions of your task you can message, and recent messages (bodies are cleared once delivered).", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in Task) (any, error) {
+		id, err := task(ctx, c, a, in.Task)
+		if err != nil {
+			return nil, err
+		}
+		ts, err := c.MessageTargets(ctx, a, id)
+		if err != nil {
+			return nil, err
+		}
+		ms, err := c.ListMessages(ctx, id, false)
+		return map[string]any{"targets": ts, "messages": ms}, err
+	})
+	add(r, "message_cancel", "Cancel a queued message you sent.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in ID) (any, error) {
+		return ok("cancelled"), c.CancelMessage(ctx, a, strings.ToUpper(in.ID))
+	})
 	add(r, "task_status", "Block, unblock, or close your task (lead). Close only after recording that done_when is met.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		Task    int64  `json:"task,omitempty" jsonschema:"task number; omit to use your session's task"`
 		Op      string `json:"op" jsonschema:"block, unblock, or close"`

@@ -563,3 +563,67 @@ func TestCursorAtEmptyInput(t *testing.T) {
 		}
 	}
 }
+
+func TestRelayMessages(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	t.Setenv("TMUX_PANE", "%0")
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	old, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	_ = c.AckHandoff(ctx, coord.Actor{SessionID: old}, nil)
+	lead, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "codex"})
+	if err := c.AckHandoff(ctx, coord.Actor{SessionID: lead}, nil); err != nil {
+		t.Fatal(err)
+	}
+	_ = c.SetSessionRuntime(ctx, old, "%2", 0, "")
+	_ = c.Observe(ctx, coord.Actor{SessionID: old}, old, "idle", "", "hook")
+	m1, err := c.SendMessage(ctx, coord.Actor{SessionID: lead}, 0, "claude", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.SendMessage(ctx, coord.Actor{SessionID: lead}, 0, "claude", "second")
+	c.Close()
+
+	screen := "────────\n\x1b[39m❯ half typed\x1b[0m\n────────"
+	cursorLine, cursorX := "❯ ", 2
+	InputView = func(string) (string, string, int, error) { return screen, cursorLine, cursorX, nil }
+	var sent []string
+	Wake = func(pane, text string) error { sent = append(sent, pane+": "+text); return nil }
+	defer func() { Wake, InputView = nil, nil }()
+
+	loadSnapshot(open)
+	if len(sent) != 0 {
+		t.Fatalf("typed over the user's draft: %v", sent)
+	}
+	screen = "" // capture failed
+	loadSnapshot(open)
+	if len(sent) != 0 {
+		t.Fatalf("typed into an unreadable pane: %v", sent)
+	}
+	// Prompt, blank line, typed third line: the cursor left the prompt row.
+	screen, cursorLine, cursorX = "\x1b[1m›\x1b[0m \n\n  third line\n\n  GPT · ~/code", "  third line", 12
+	loadSnapshot(open)
+	if len(sent) != 0 {
+		t.Fatalf("typed into a multi-line draft: %v", sent)
+	}
+	cursorLine, cursorX = "❯ ", 2
+	screen = "────────\n\x1b[39m❯ \x1b[2mtry this\x1b[0m\n────────"
+	loadSnapshot(open)
+	if len(sent) != 1 || !strings.HasPrefix(sent[0], "%2: AgentShiftboard "+m1.ID+" from codex lead ") || !strings.Contains(sent[0], ": first (reply: agent-shiftboard message send "+lead[:8]) {
+		t.Fatalf("first refresh: %v", sent)
+	}
+	loadSnapshot(open)
+	if len(sent) != 2 || !strings.Contains(sent[1], ": second (reply:") {
+		t.Fatalf("second refresh: %v", sent)
+	}
+	loadSnapshot(open)
+	if len(sent) != 2 {
+		t.Fatalf("delivered twice: %v", sent)
+	}
+}

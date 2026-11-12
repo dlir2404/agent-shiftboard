@@ -31,6 +31,7 @@ var codexAgentShiftboardTools = []string{
 	"shiftboard_task_create", "shiftboard_task_describe", "shiftboard_config_set", "shiftboard_secret_ref_add",
 	"shiftboard_tool_register", "shiftboard_lock_acquire", "shiftboard_lock_release",
 	"shiftboard_item_list", "shiftboard_item_add", "shiftboard_item_set",
+	"shiftboard_message_send", "shiftboard_message_list", "shiftboard_message_cancel",
 }
 
 var codexHookEvents = []struct {
