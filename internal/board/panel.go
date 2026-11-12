@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	ansiwidth "github.com/charmbracelet/x/ansi"
 
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 )
@@ -272,7 +273,7 @@ func (p panel) View() string {
 		return "This session is no longer open.\n\nesc close"
 	}
 	r := p.row
-	head := title.Render(r.id+" "+r.text) + "  " + dim.Render(r.agents)
+	head := title.Render(r.id+" "+r.text) + "  " + agentChips(r)
 	if r.progress != "" {
 		head += dim.Render(" · " + r.progress + " done")
 	}
@@ -422,7 +423,7 @@ func (p panel) rowLine(it item, w int) string {
 		if it.assignment != nil {
 			state += " · " + it.assignment.Status
 		}
-		return statusIcon(it.status) + " " + trunc(it.text+"  "+dim.Render(state+" "+ago(it.observed)), w+20)
+		return ansiwidth.Truncate(statusIcon(it.status)+" "+agentLabel(it)+"  "+dim.Render(state+" · "+ago(it.observed)), w, "…")
 	default:
 		return warn.Render("!") + " " + trunc(it.kind+" "+it.id+" "+it.text, w-2)
 	}

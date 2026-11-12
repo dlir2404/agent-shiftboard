@@ -459,3 +459,49 @@ func TestViewsNeverPanicInNarrowPanes(t *testing.T) {
 		}
 	}
 }
+
+func TestHandoffShowsOneLead(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, err := open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := c.CreateTask(ctx, coord.User, "switch test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.AckHandoff(ctx, coord.Actor{SessionID: old}, nil); err != nil {
+		t.Fatal(err)
+	}
+	next, err := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk, _ := c.GetTask(ctx, id); tk.PendingLead != next || tk.LeadSession != old {
+		t.Fatalf("expected a pending handoff: %+v", tk)
+	}
+	c.Close()
+
+	snap := loadSnapshot(open)
+	roles := map[string]string{}
+	for _, a := range snap.items[0].agentList {
+		roles[a.provider] = a.role
+	}
+	if roles["claude"] != "lead" || roles["codex"] != "outgoing lead" {
+		t.Fatalf("handoff roles = %v", roles)
+	}
+	chips := agentChips(snap.items[0])
+	if n := strings.Count(chips, "[LEAD]"); n != 1 || !strings.Contains(chips, "codex [handing off]") {
+		t.Fatalf("want one [LEAD] and codex handing off, got %d: %s", n, chips)
+	}
+}

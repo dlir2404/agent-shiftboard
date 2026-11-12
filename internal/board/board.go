@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	ansiwidth "github.com/charmbracelet/x/ansi"
 
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 )
@@ -459,8 +460,15 @@ func needsLead(t coord.Task) bool {
 	return t.LeaseState == "vacant" && t.Status != "done" && t.Status != "cancelled"
 }
 
+// agentRole names one session's part in the task. During a voluntary
+// handoff the incoming session is the lead and the holder is only handing
+// off: its writes are already rejected (STATE-CONTRACT), so the board must
+// not show two leads.
 func agentRole(t coord.Task, s coord.Session) string {
-	if s.ID == t.LeadSession || s.ID == t.PendingLead {
+	switch {
+	case t.PendingLead != "" && s.ID == t.LeadSession && s.ID != t.PendingLead:
+		return "outgoing lead"
+	case s.ID == t.LeadSession || s.ID == t.PendingLead:
 		return "lead"
 	}
 	if s.Role == "lead" {
@@ -957,7 +965,7 @@ func cardLines(it item, w int, shown bool) []string {
 	if it.needCount > 0 {
 		second += "  " + warn.Render(fmt.Sprintf("◐ %d", it.needCount))
 	}
-	return []string{first, trunc(second, w+60)}
+	return []string{first, ansiwidth.Truncate(second, w, "…")}
 }
 
 // progressBar draws "▰▰▰▱▱▱ 3/6" from "done/total".
@@ -971,16 +979,39 @@ func progressBar(progress string) string {
 	return good.Render(strings.Repeat("▰", full)) + dim.Render(strings.Repeat("▱", cells-full)) + " " + dim.Render(progress)
 }
 
-// agentChips is a compact "claude ● codex ○" line.
+// agentLabel keeps role styling consistent across the list and actions panel.
+// Text labels also distinguish roles when color is unavailable or selected.
+func agentLabel(a item) string {
+	var label string
+	switch a.role {
+	case "lead":
+		label = title.Render(a.provider) + " " + accent.Render("[LEAD]")
+	case "former lead":
+		label = dim.Render(a.provider + " [previous]")
+	case "outgoing lead":
+		label = dim.Render(a.provider + " [handing off]")
+	default:
+		label = a.provider
+		if a.role != "" {
+			label += " " + dim.Render("["+a.role+"]")
+		}
+	}
+	if a.assignment != nil {
+		label += " " + dim.Render(a.assignment.ID)
+	}
+	return label
+}
+
+// agentChips shows the current lead first, with explicit role labels.
 func agentChips(it item) string {
 	var out []string
 	if needsLead(it.task) {
 		out = append(out, warn.Render("no lead"))
 	}
 	for _, a := range it.agentList {
-		out = append(out, dim.Render(a.provider)+" "+statusIcon(a.status))
+		out = append(out, agentLabel(a)+" "+statusIcon(a.status))
 	}
-	return strings.Join(out, " ")
+	return strings.Join(out, dim.Render(" · "))
 }
 
 // compactDetail is a short description of the selected row for the
@@ -1021,11 +1052,9 @@ func compactDetail(it item, w int) string {
 				if a.reason != "" {
 					state = a.reason
 				}
-				label := a.provider + " " + a.role
-				if a.assignment != nil {
-					label += " " + a.assignment.ID
-				}
-				b.WriteString("   " + statusIcon(a.status) + " " + trunc(fmt.Sprintf("%-18s", label), 18) + " " + dim.Render(trunc(state, w-26)) + "\n")
+				label := agentLabel(a)
+				line := "   " + statusIcon(a.status) + " " + label + "  " + dim.Render(state)
+				b.WriteString(ansiwidth.Truncate(line, w, "…") + "\n")
 			}
 		}
 		b.WriteString(" " + sectionTitle.Render("NEEDS YOU") + "\n")
