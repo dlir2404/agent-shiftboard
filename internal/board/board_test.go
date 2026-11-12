@@ -627,3 +627,68 @@ func TestRelayMessages(t *testing.T) {
 		t.Fatalf("delivered twice: %v", sent)
 	}
 }
+
+func TestCodexNativeStates(t *testing.T) {
+	// Captured from live Codex panes.
+	rateDialog := "• Ran git status --short\n  Approaching rate limits\n  Switch to gpt-6-luna for lower credit usage?\n\n› 1. Switch to gpt-6-luna   Fast and affordable model for easier tasks.\n  2. Keep current model\n  3. Keep current model (never show again)   Hide future rate limit reminders\n\n  enter select · esc back"
+	if got := nativePrompt(rateDialog); got != "asks whether to switch models (rate limits)" {
+		t.Fatalf("rate dialog: %q", got)
+	}
+	// A numbered list the user once typed, above an idle composer, is not a dialog.
+	if got := nativePrompt("› 1. fix tests\n  2. push\n• Done.\n› Ask Codex to do anything\n  GPT-6 · ~/code"); got != "" {
+		t.Fatalf("idle screen read as a prompt: %q", got)
+	}
+	limit := "• Ran gofmt -w internal/coord/sessions.go\n  └ (no output)\n■ You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/settings/usage to purchase more credits or\ntry again at 6:49 PM.\n\n› Ask Codex to do anything\n  GPT-6-Astra high · ~/code/agent-shiftboard\n  ← for agents · ? for shortcuts"
+	if ok, at := usageLimit(limit); !ok || at != "6:49 PM" {
+		t.Fatalf("usage limit: %v %q", ok, at)
+	}
+	resumed := strings.Replace(limit, "\n\n› Ask", "\n› continue\n• Working on it\n\n› Ask", 1)
+	if ok, _ := usageLimit(resumed); ok {
+		t.Fatal("an old notice above newer output must not count")
+	}
+
+	// The board records the session as out of quota (source pane).
+	root := t.TempDir()
+	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())
+	if err := os.MkdirAll(paths.StateDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	open := func(ctx context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	ctx := context.Background()
+	c, _ := open(ctx)
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	lead, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	_ = c.AckHandoff(ctx, coord.Actor{SessionID: lead}, nil)
+	aid, _ := c.CreateAssignment(ctx, coord.Actor{SessionID: lead}, coord.AssignmentInput{TaskID: id, Scope: "x"})
+	wid, _ := c.RegisterWorker(ctx, coord.Actor{SessionID: lead}, aid, coord.SessionSpec{Provider: "codex"})
+	_ = c.SetSessionRuntime(ctx, wid, "%6", 0, "")
+	_ = c.Observe(ctx, coord.Actor{SessionID: wid}, wid, "running", "", "hook")
+	c.Close()
+	Capture = func(pane string, _ int) string {
+		if pane == "%6" {
+			return limit
+		}
+		return ""
+	}
+	defer func() { Capture = nil }()
+	snap := loadSnapshot(open)
+	c, _ = open(ctx)
+	defer c.Close()
+	ss, _ := c.ListSessions(ctx, id)
+	for _, s := range ss {
+		if s.ID == wid && (s.Status != "quota_unavailable" || s.Reason != "quota" || s.StatusSource != "pane") {
+			t.Fatalf("worker after the notice: %+v", s)
+		}
+	}
+	found := false
+	for _, it := range snap.items {
+		for _, a := range it.agentList {
+			if a.id == wid && a.reason == "out of usage, try again at 6:49 PM" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("board does not show when to try again")
+	}
+}

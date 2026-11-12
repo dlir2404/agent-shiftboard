@@ -248,8 +248,17 @@ func loadSnapshot(open Opener) snapshot {
 				ag.pane = ""
 			}
 			if Capture != nil && ag.pane != "" {
-				if p := nativePrompt(Capture(ag.pane, 40)); p != "" {
+				screen := Capture(ag.pane, 40)
+				if p := nativePrompt(screen); p != "" {
 					ag.status, ag.reason = "waiting_for_approval", p
+				} else if limited, at := usageLimit(screen); limited && x.Provider == "codex" {
+					ag.status, ag.reason = "quota_unavailable", "out of usage"
+					if at != "" {
+						ag.reason += ", try again at " + at
+					}
+					if !Passive && x.Status != "quota_unavailable" {
+						_ = c.Observe(ctx, coord.User, x.ID, "quota_unavailable", "quota", "pane")
+					}
 				}
 			}
 			agents[x.ID] = ag
@@ -1278,6 +1287,12 @@ func nativePrompt(screen string) string {
 	if strings.Contains(low, "ask codex to do anything") {
 		return ""
 	}
+	if optionDialog(recent) {
+		if strings.Contains(low, "rate limit") {
+			return "asks whether to switch models (rate limits)"
+		}
+		return "asks you to choose an option"
+	}
 	switch {
 	case strings.Contains(low, "trust this folder") || strings.Contains(low, "trust the files in this folder") || strings.Contains(low, "is this a project you created or one you trust"):
 		return "asks to trust the folder"
@@ -1287,6 +1302,69 @@ func nativePrompt(screen string) string {
 		return "asks to log in"
 	}
 	return ""
+}
+
+var optionLine = regexp.MustCompile(`^\s*(?:[›❯]\s*)?\d+\.\s`)
+
+// optionDialog recognizes a CLI's numbered selection dialog at the bottom
+// of the pane: a selected option ("› 1. …") and another numbered option.
+func optionDialog(recent []string) bool {
+	selected, options := false, 0
+	for _, l := range lastN(recent, 8) {
+		t := strings.TrimLeft(l, " \u00a0")
+		if !optionLine.MatchString(t) {
+			continue
+		}
+		options++
+		if strings.HasPrefix(t, "›") || strings.HasPrefix(t, "❯") {
+			selected = true
+		}
+	}
+	return selected && options >= 2
+}
+
+var tryAgain = regexp.MustCompile(`(?i)try again at ([^.]+)`)
+
+// usageLimit recognizes Codex's out-of-usage notice ("You've hit your
+// usage limit … try again at 6:49 PM.") when it is the last output above
+// the composer, and returns the time it names. Codex reports no hook for
+// it, so the session would otherwise keep its last status.
+func usageLimit(screen string) (bool, string) {
+	var lines []string
+	for _, l := range strings.Split(screen, "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines = append(lines, l)
+		}
+	}
+	composer := -1
+	for i := len(lines) - 1; i >= 0 && composer < 0; i-- {
+		if hasInputGlyph(lines[i]) {
+			composer = i
+		}
+	}
+	if composer < 0 {
+		return false, ""
+	}
+	// The notice starts with "■" and may wrap onto a few lines; any other
+	// output or message between it and the composer means it is old.
+	for i := composer - 1; i >= 0 && i >= composer-4; i-- {
+		t := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(t, "•") || hasInputGlyph(lines[i]) {
+			return false, ""
+		}
+		if !strings.HasPrefix(t, "■") {
+			continue
+		}
+		text := strings.Join(lines[i:composer], " ")
+		if !strings.Contains(strings.ToLower(text), "hit your usage limit") {
+			return false, ""
+		}
+		if m := tryAgain.FindStringSubmatch(text); m != nil {
+			return true, strings.TrimSpace(m[1])
+		}
+		return true, ""
+	}
+	return false, ""
 }
 
 // openAssignment reports whether a worker's assignment still awaits the

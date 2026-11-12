@@ -18,7 +18,7 @@ func TestCloseSessionGuards(t *testing.T) {
 	fails(t, f.c.CloseSession(f.ctx, lead, lead.SessionID, kill), "your own session")
 	fails(t, f.c.CloseSession(f.ctx, worker, lead.SessionID, kill), "only the current lead")
 	ok(t, f.c.Observe(f.ctx, worker, wid, "running", "", "hook"))
-	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill), "only idle sessions")
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill), "only an idle session")
 	ok(t, f.c.Observe(f.ctx, worker, wid, "idle", "", "hook"))
 	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill), "cancel it first")
 	ok(t, f.c.CancelAssignment(f.ctx, lead, aid, "not needed"))

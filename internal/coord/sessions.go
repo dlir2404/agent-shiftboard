@@ -180,8 +180,11 @@ func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID strin
 		if s.Role != "worker" && s.Role != "lead" {
 			return errors.New("only workers and former leads can be closed")
 		}
-		if s.Status != "idle" {
-			return fmt.Errorf("session %s is %s; only idle sessions can be closed", s.ID, s.Status)
+		switch s.Status {
+		case "idle", "quota_unavailable", "cooling_down", "authentication_required":
+			// The CLI waits at its prompt; closing it interrupts no work.
+		default:
+			return fmt.Errorf("session %s is %s; only an idle session, or one out of quota, cooling down, or waiting for authentication, can be closed", s.ID, s.Status)
 		}
 		if s.Role == "worker" {
 			var active int
