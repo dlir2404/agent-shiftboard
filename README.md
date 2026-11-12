@@ -32,7 +32,7 @@
 │   ● claude lead      running      │                                              │
 │   ◐ codex worker A-2 asks approval│                                              │
 └───────────────────────────────────┴──────────────────────────────────────────────┘
- ◐ 1 need you · ⇧↓ open · ⇧← list · ⇧→ session · Ctrl+Q leave
+ ◐ 1 need you · ⇧↓ open · ⇧↑ actions · ⇧← list · ⇧→ session · Ctrl+Q leave
 ```
 
 ## About

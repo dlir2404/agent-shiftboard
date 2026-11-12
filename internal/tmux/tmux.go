@@ -52,8 +52,8 @@ set -g status-position bottom
 set -g status-style "bg=colour236,fg=colour250"
 set -g status-left " AgentShiftboard · #W "
 set -g status-left-length 60
-set -g status-right "#{?#{&&:#{@asb_need},#{!=:#{@asb_need},0}},#[fg=colour220#,bold]◐ #{@asb_need} need you · ⇧↓ open #[default]· ,}⇧← list · ⇧→ session · Ctrl+Q leave "
-set -g status-right-length 110
+set -g status-right "#{?#{&&:#{@asb_need},#{!=:#{@asb_need},0}},#[fg=colour220#,bold]◐ #{@asb_need} need you · ⇧↓ open #[default]· ,}⇧↑ actions · ⇧← list · ⇧→ session · Ctrl+Q leave "
+set -g status-right-length 125
 set -g window-status-format ""
 set -g window-status-current-format ""
 set -g pane-active-border-style "fg=colour39"
@@ -61,6 +61,9 @@ set -g pane-active-border-style "fg=colour39"
 bind -n S-Left select-window -t :main \; select-pane -t :main.0
 bind -n S-Right select-window -t :main \; select-pane -t :main.1
 bind -n C-q detach-client
+# Shift+Up: the actions panel of the session you are in, from any pane. In
+# the list it goes to the list itself, which opens the selected session.
+bind -n S-Up if -F "#{&&:#{==:#{window_name},main},#{==:#{pane_index},0}}" { send-keys S-Up } { run-shell -b -c "#{session_path}" "AGENT_SHIFTBOARD_IN_WORKSPACE=1 AGENT_SHIFTBOARD_SELF actions --pane #{pane_id}" }
 # Shift+Down: jump to what needs you (an agent's prompt, or the Needs you panel).
 bind -n S-Down run-shell -b -c "#{session_path}" "AGENT_SHIFTBOARD_IN_WORKSPACE=1 AGENT_SHIFTBOARD_SELF attention"
 # Keep the session list at a fixed width whatever the terminal size.

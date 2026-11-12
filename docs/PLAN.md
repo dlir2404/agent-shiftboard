@@ -230,7 +230,7 @@ Each adapter exposes: detect/capability report, interactive launch and resume co
  Shift+← list · Shift+→ session · Ctrl+Q leave
 ```
 
-The workspace is one tmux session per project on AgentShiftboard's own server (D-14, D-15). Its `home` window is this list; every lead and worker runs in its own window. `Enter` opens a session full screen and `Ctrl+Q` returns to the list. The first run with no open task goes straight into a new lead. When a lead's CLI exits, its window offers resume, switching to another CLI, a new task, or another task. The list shows waiting-for-approval and native prompts, cooldown/reset information when known, stale-brief flags, proposed rules and delegations, held locks, and the lead lease state, and distinguishes task state from session status.
+The workspace is one tmux session per project on AgentShiftboard's own server (D-14, D-15). Its `home` window is this list; every lead and worker runs in its own window. `Enter` opens a session full screen and `Ctrl+Q` returns to the list. From any pane, `Shift+Up` opens the actions panel of the session you are in, and `Shift+Down` jumps to what needs you. The first run with no open task goes straight into a new lead. When a lead's CLI exits, its window offers resume, switching to another CLI, a new task, or another task. The list shows waiting-for-approval and native prompts, cooldown/reset information when known, stale-brief flags, proposed rules and delegations, held locks, and the lead lease state, and distinguishes task state from session status.
 
 ### Initial command surface
 

@@ -313,17 +313,17 @@ func loadSnapshot(open Opener) snapshot {
 			}
 		}
 		row := item{kind: "task", id: fmt.Sprintf("#%d", t.ID), text: t.Title, task: t, brief: b,
-			agents: strings.Join(chips, " · "), agentList: agentRows, keys: "space actions · →/enter open the lead"}
+			agents: strings.Join(chips, " · "), agentList: agentRows, keys: "⇧↑ actions · →/enter open the lead"}
 		if needsLead(t) {
-			row.keys = "space actions · →/enter start a new lead"
+			row.keys = "⇧↑ actions · →/enter start a new lead"
 		}
 		if t.Status == "done" {
-			row.keys = "space actions · →/enter open the session"
+			row.keys = "⇧↑ actions · →/enter open the session"
 		}
 		if lead != nil {
 			row.provider, row.status, row.reason, row.pane, row.observed = lead.s.Provider, lead.status, lead.reason, lead.pane, lead.s.ObservedAt
 			if lead.pane == "" && t.Status != "done" {
-				row.keys = "space actions · →/enter resume the lead"
+				row.keys = "⇧↑ actions · →/enter resume the lead"
 			}
 		}
 		done, total := 0, 0
@@ -608,7 +608,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "esc":
 			m.filter, m.cursor = "", 0
-		case " ":
+		case " ", "shift+up": // tmux passes Shift+Up through to the list
 			if it, ok := m.selected(); ok {
 				switch it.kind {
 				case "older":
@@ -896,7 +896,7 @@ func (m model) View() string {
 		head = append(head, " "+accent.Render("/"+m.filter)+dim.Render("  esc clears"))
 	}
 
-	foot := " " + keyHint.Render("space") + dim.Render(" actions  ") + keyHint.Render("⏎") + dim.Render(" open lead") + "\n " +
+	foot := " " + keyHint.Render("⇧↑") + dim.Render(" actions  ") + keyHint.Render("⏎") + dim.Render(" open lead") + "\n " +
 		keyHint.Render("n") + dim.Render(" new  ") + keyHint.Render("/") + dim.Render(" find  ") + keyHint.Render("⇧←/⇧→") + dim.Render(" switch pane")
 	if m.input != nil {
 		prompt := "Answer " + m.input.id

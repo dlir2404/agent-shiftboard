@@ -17,7 +17,7 @@ func (a *app) boardCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "board",
 		Short: "Open the session list (user)",
-		Long:  "The session list shows sessions, their progress, and what needs you. In the tmux workspace it is the left pane; space opens a session's actions panel.",
+		Long:  "The session list shows sessions, their progress, and what needs you. In the tmux workspace it is the left pane; Shift+Up (or space) opens a session's actions panel.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			root, err := a.wireWorkspace(cmd.Context())
@@ -51,6 +51,61 @@ func (a *app) panelCmd() *cobra.Command {
 	a.taskFlag(cmd)
 	cmd.Flags().StringVar(&view, "view", "", "view to open (Overview, Checklist, Agents, Needs you)")
 	return cmd
+}
+
+// actionsCmd opens the actions panel of the session shown where the user
+// is (bound to Shift+Up): the task of the focused pane, or of the session
+// on the right when the list has focus, else the most recent open task.
+func (a *app) actionsCmd() *cobra.Command {
+	var pane string
+	cmd := &cobra.Command{
+		Use: "actions", Short: "Open the actions panel of the session you are in", Hidden: true, Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !coord.ActorFromEnv().IsUser() {
+				return coord.ErrUserOnly
+			}
+			root, err := a.wireWorkspace(cmd.Context())
+			if err != nil {
+				return err
+			}
+			ws := tmux.New(tmux.Exec{}, root)
+			c, err := a.open(cmd.Context())
+			if err != nil {
+				return err
+			}
+			taskID := paneTask(cmd.Context(), c, pane)
+			if taskID == 0 {
+				if shown, err := ws.Shown(); err == nil {
+					taskID = paneTask(cmd.Context(), c, shown)
+				}
+			}
+			if taskID == 0 {
+				taskID, _ = a.taskFor(cmd.Context(), c, coord.User)
+			}
+			c.Close()
+			if taskID == 0 || board.OpenPanel == nil {
+				_, err = ws.R.Run("display-message", "No open session")
+				return err
+			}
+			return board.OpenPanel(taskID, "Overview")
+		},
+	}
+	cmd.Flags().StringVar(&pane, "pane", "", "the pane the key was pressed in")
+	return cmd
+}
+
+// paneTask returns the task of the live session running in pane, or 0.
+func paneTask(ctx context.Context, c *coord.Coordinator, pane string) int64 {
+	if pane == "" {
+		return 0
+	}
+	ss, _ := c.ListSessions(ctx, 0)
+	for _, s := range ss {
+		if s.PaneID == pane && s.Status != "stopped" && s.Status != "failed" {
+			return s.TaskID
+		}
+	}
+	return 0
 }
 
 // attentionCmd jumps to what needs the user (bound to Shift+Down).

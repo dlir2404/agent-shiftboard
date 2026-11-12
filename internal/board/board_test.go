@@ -47,7 +47,7 @@ func TestViewShowsWhatNeedsTheUser(t *testing.T) {
 		t.Fatalf("list should show one session with 2 things that need the user: %+v", vis)
 	}
 	v := m.View()
-	for _, want := range []string{"AgentShiftboard", "SESSIONS", "#1", "implement cache", "◐ 2", "NEEDS YOU", "space"} {
+	for _, want := range []string{"AgentShiftboard", "SESSIONS", "#1", "implement cache", "◐ 2", "NEEDS YOU", "⇧↑ actions"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
