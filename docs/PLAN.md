@@ -142,6 +142,7 @@ The storage location is project-scoped and local: a dedicated ignored `.agent-sh
 2. The coordinator records and validates it and starts another independent CLI session, of the same or a different provider, interactive in tmux or headless for bounded work.
 3. The worker receives the current brief, its assignment, rules in force, and the resource index — not the lead's transcript.
 4. The worker returns a concise result and evidence. The lead accepts or corrects the task state.
+5. The lead closes sessions it no longer needs (`session close`): an idle worker after its assignment is settled, or an idle former lead. Finished workers also close themselves after the lead accepts, rejects, or cancels their work (D-26).
 
 ### Messaging between sessions
 
@@ -257,6 +258,7 @@ Agent operations (CLI subcommands and `agent-shiftboard mcp`; covered by allowli
 - `effect plan|start|finish|reconcile`, `milestone record`.
 - `delegate <task>` (creates an assignment), `assignment submit|accept|reject|cancel`, `handoff ack`.
 - `message send|list|cancel` (short notes between sessions of a task, D-25).
+- `worker start`, `session list|close` (the lead starts and closes its task's agents, D-26).
 - `task block|unblock|close`.
 - `config set`, `secret ref add`, `tool register|deprecate`, `lock acquire|release`.
 

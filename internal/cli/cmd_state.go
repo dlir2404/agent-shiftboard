@@ -14,6 +14,7 @@ import (
 
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/render"
+	"github.com/dlir2404/agent-shiftboard/internal/tmux"
 )
 
 func (a *app) briefCmd() *cobra.Command {
@@ -542,7 +543,7 @@ func (a *app) delegateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return a.done("Created assignment "+id+". Worker launch arrives with the adapters (Phase 3).", map[string]string{"id": id})
+				return a.done("Created assignment "+id+". Start it with `agent-shiftboard worker start "+id+" --provider claude|codex` (MCP: shiftboard_worker_start).", map[string]string{"id": id})
 			})
 		},
 	}
@@ -678,17 +679,24 @@ func (a *app) sessionCmd() *cobra.Command {
 		Use: "list", Short: "List sessions", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
-				id, _ := c.ResolveTask(ctx, actor, a.task)
-				ss, err := c.ListSessions(ctx, id)
+				id := a.task
+				if !actor.IsUser() || id > 0 {
+					var err error
+					id, err = c.ResolveTask(ctx, actor, id)
+					if err != nil {
+						return err
+					}
+				}
+				ss, err := c.ListSessionViews(ctx, id)
 				if err != nil {
 					return err
 				}
 				return a.emit(ss, func(w io.Writer) {
 					var rows [][]string
 					for _, s := range ss {
-						rows = append(rows, []string{s.ID, fmt.Sprintf("#%d", s.TaskID), s.Provider, s.Role, s.Status, s.Reason, s.StatusSource, s.ObservedAt})
+						rows = append(rows, []string{s.ID, fmt.Sprintf("#%d", s.TaskID), s.Provider, s.Role, s.AssignmentID, s.Status, s.Reason, s.StatusSource, s.ObservedAt})
 					}
-					table(w, "SESSION\tTASK\tPROVIDER\tROLE\tSTATUS\tREASON\tSOURCE\tOBSERVED", rows)
+					table(w, "SESSION\tTASK\tPROVIDER\tROLE\tASSIGNMENT\tSTATUS\tREASON\tSOURCE\tOBSERVED", rows)
 				})
 			})
 		},
@@ -705,6 +713,22 @@ func (a *app) sessionCmd() *cobra.Command {
 	}
 	observe.Flags().StringVar(&reason, "reason", "", "stop/failure reason")
 	observe.Flags().StringVar(&source, "source", "user", "observation source")
-	cmd.AddCommand(list, observe)
+	closeCmd := &cobra.Command{
+		Use: "close <session|A-n|unique-prefix>", Short: "Close an idle worker or former lead (lead)", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
+				sid, err := c.ResolveSession(ctx, actor, args[0])
+				if err != nil {
+					return err
+				}
+				ws := tmux.New(tmux.Exec{}, c.Root)
+				if err := c.CloseSession(ctx, actor, sid, ws.Close); err != nil {
+					return err
+				}
+				return a.done("Closed session "+sid+".", map[string]string{"session": sid})
+			})
+		},
+	}
+	cmd.AddCommand(list, observe, closeCmd)
 	return cmd
 }

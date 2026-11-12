@@ -148,6 +148,180 @@ func (c *Coordinator) SetSessionRuntime(ctx context.Context, sessionID, paneID s
 	return err
 }
 
+// CloseSession closes an idle worker or former lead. Validate in a short
+// transaction, then let the workspace end the pane without holding a DB lock.
+// A failed close leaves the observation unchanged; only a confirmed close is
+// recorded as stopped. Native session identity is retained for later resume.
+func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID string, kill func(string) error) error {
+	if kill == nil {
+		return errors.New("session close requires a workspace operation")
+	}
+	var taskID int64
+	var pane string
+	err := c.tx(ctx, func(tx *sql.Tx) error {
+		s, err := loadSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
+		taskID = s.TaskID
+		if err := c.checkWrite(tx, taskID, a, accessLead); err != nil {
+			return err
+		}
+		if s.ID == a.SessionID {
+			return errors.New("cannot close your own session")
+		}
+		l, err := loadLease(tx, taskID)
+		if err != nil {
+			return err
+		}
+		if s.ID == l.Holder || s.ID == l.Pending {
+			return errors.New("cannot close the current or pending lead")
+		}
+		if s.Role != "worker" && s.Role != "lead" {
+			return errors.New("only workers and former leads can be closed")
+		}
+		if s.Status != "idle" {
+			return fmt.Errorf("session %s is %s; only idle sessions can be closed", s.ID, s.Status)
+		}
+		if s.Role == "worker" {
+			var active int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM assignments WHERE worker_session=? AND status IN ('assigned','running')`, s.ID).Scan(&active); err != nil {
+				return err
+			}
+			if active > 0 {
+				return errors.New("worker still has an assigned or running assignment; cancel it first")
+			}
+		}
+		if err := tx.QueryRow(`SELECT pane_id FROM sessions WHERE id=?`, s.ID).Scan(&pane); err != nil {
+			return err
+		}
+		if pane == "" {
+			return errors.New("session has no workspace pane to close")
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := kill(pane); err != nil {
+		return fmt.Errorf("close session %s: %w", sessionID, err)
+	}
+	// The workspace ended the process; a lead's close is a process
+	// observation, the user's a user one.
+	source := "process"
+	if a.IsUser() {
+		source = "user"
+	}
+	err = c.tx(ctx, func(tx *sql.Tx) error {
+		s, err := loadSession(tx, sessionID)
+		if err != nil {
+			return err
+		}
+		if err := c.applyObservation(tx, s, "stopped", "completed", source); err != nil {
+			return err
+		}
+		return c.event(tx, taskID, a, "session_closed", sessionID)
+	})
+	if err == nil {
+		c.changed(taskID)
+	}
+	return err
+}
+
+// ResolveSession resolves an exact ID, assignment ID, or unique ID prefix.
+// Agents search only their own task; the user may select any task's session.
+func (c *Coordinator) ResolveSession(ctx context.Context, a Actor, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", errors.New("a session ID, assignment ID, or unique prefix is required")
+	}
+	var taskID int64
+	if !a.IsUser() {
+		var err error
+		taskID, err = c.sessionTask(ctx, a)
+		if err != nil {
+			return "", err
+		}
+	}
+	if strings.HasPrefix(strings.ToUpper(ref), "A-") {
+		id, err := ParseID("A", strings.ToUpper(ref))
+		if err != nil {
+			return "", err
+		}
+		var worker string
+		if err := c.DB.QueryRowContext(ctx, `SELECT worker_session FROM assignments WHERE id=? AND (?=0 OR task_id=?)`, id, taskID, taskID).Scan(&worker); err != nil || worker == "" {
+			return "", fmt.Errorf("assignment %s has no worker session in this task", ref)
+		}
+		return worker, nil
+	}
+	ss, err := c.ListSessions(ctx, taskID)
+	if err != nil {
+		return "", err
+	}
+	var matches []string
+	for _, s := range ss {
+		if s.ID == ref {
+			return s.ID, nil
+		}
+		if strings.HasPrefix(s.ID, ref) {
+			matches = append(matches, s.ID)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("session prefix %q is ambiguous; use a longer ID", ref)
+	}
+	return "", fmt.Errorf("no session matches %q", ref)
+}
+
+// SessionView adds the task-relative role and current assignment to a session.
+// The stored role remains unchanged when a lead hands off to its successor.
+type SessionView struct {
+	Session
+	Role         string `json:"role"`
+	AssignmentID string `json:"assignment_id,omitempty"`
+}
+
+func (c *Coordinator) ListSessionViews(ctx context.Context, taskID int64) ([]SessionView, error) {
+	ss, err := c.ListSessions(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	tasks := map[int64]Task{}
+	assignments := map[string]string{}
+	views := make([]SessionView, 0, len(ss))
+	for _, s := range ss {
+		t, exists := tasks[s.TaskID]
+		if !exists {
+			t, err = c.GetTask(ctx, s.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			tasks[s.TaskID] = t
+			as, err := c.ListAssignments(ctx, s.TaskID)
+			if err != nil {
+				return nil, err
+			}
+			for _, assignment := range as {
+				assignments[assignment.WorkerSession] = assignment.ID
+			}
+		}
+		role := s.Role
+		switch {
+		case t.PendingLead != "" && s.ID == t.LeadSession && s.ID != t.PendingLead:
+			role = "outgoing lead"
+		case s.ID == t.LeadSession || s.ID == t.PendingLead:
+			role = "lead"
+		case s.Role == "lead":
+			role = "former lead"
+		}
+		views = append(views, SessionView{Session: s, Role: role, AssignmentID: assignments[s.ID]})
+	}
+	return views, nil
+}
+
 // Observe records a status observation for a session and applies the
 // contract's lease, side-effect, assignment, and lock rules. It is called
 // by hook handlers (as the session itself) and by the board (as the user).

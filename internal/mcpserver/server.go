@@ -18,11 +18,22 @@ import (
 // Opener opens a coordinator for one call.
 type Opener func(ctx context.Context) (*coord.Coordinator, error)
 
+// Ops supplies lifecycle operations from the CLI host. The MCP package
+// knows nothing about tmux or provider launch scripts.
+type Ops struct {
+	WorkerStart  func(context.Context, *coord.Coordinator, coord.Actor, string, string) (string, string, error)
+	SessionClose func(context.Context, *coord.Coordinator, coord.Actor, string) error
+	SessionList  func(context.Context, *coord.Coordinator, coord.Actor, int64) ([]coord.SessionView, error)
+}
+
 // New builds the server. Each tool call opens the coordinator, acts as the
 // session named in the environment, and closes it again.
-func New(version string, open Opener) *mcp.Server {
+func New(version string, open Opener, ops ...*Ops) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{Name: "agent-shiftboard", Version: version}, nil)
 	r := registrar{s: s, open: open}
+	if len(ops) > 0 {
+		r.ops = ops[0]
+	}
 	r.register()
 	return s
 }
@@ -30,6 +41,7 @@ func New(version string, open Opener) *mcp.Server {
 type registrar struct {
 	s    *mcp.Server
 	open Opener
+	ops  *Ops
 }
 
 // Task selects a task; 0 means the calling session's own task.
@@ -71,6 +83,30 @@ func task(ctx context.Context, c *coord.Coordinator, a coord.Actor, t int64) (in
 func ok(msg string) any { return msg }
 
 func (r registrar) register() {
+	add(r, "worker_start", "Start an independent worker for an assignment (lead); choose its provider for short or long work.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		ID       string `json:"id" jsonschema:"assignment ID, e.g. A-2"`
+		Provider string `json:"provider" jsonschema:"provider CLI: claude or codex"`
+	}) (any, error) {
+		if r.ops == nil || r.ops.WorkerStart == nil {
+			return nil, fmt.Errorf("worker_start is unavailable: lifecycle operations were not configured")
+		}
+		sid, pane, err := r.ops.WorkerStart(ctx, c, a, strings.ToUpper(in.ID), in.Provider)
+		return map[string]string{"session": sid, "pane": pane}, err
+	})
+	add(r, "session_close", "Close an idle worker or former lead of your task (lead). Cancel assigned or running work first; the current lead and your own session cannot be closed.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+		Session string `json:"session" jsonschema:"session ID, assignment ID (A-n), or unique session ID prefix"`
+	}) (any, error) {
+		if r.ops == nil || r.ops.SessionClose == nil {
+			return nil, fmt.Errorf("session_close is unavailable: lifecycle operations were not configured")
+		}
+		return ok("closed"), r.ops.SessionClose(ctx, c, a, in.Session)
+	})
+	add(r, "session_list", "List sessions with their task-relative role, status, and assignment.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in Task) (any, error) {
+		if r.ops == nil || r.ops.SessionList == nil {
+			return nil, fmt.Errorf("session_list is unavailable: lifecycle operations were not configured")
+		}
+		return r.ops.SessionList(ctx, c, a, in.Task)
+	})
 	// --- read operations ---
 	add(r, "task_list", "List tasks with status and lead lease state.", func(ctx context.Context, c *coord.Coordinator, _ coord.Actor, _ struct{}) (any, error) {
 		return c.ListTasks(ctx)

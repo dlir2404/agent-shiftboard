@@ -21,6 +21,7 @@ func (codex) LaunchContextEvent(h HookInput) bool {
 func init() { register(codex{}) }
 
 var codexAgentShiftboardTools = []string{
+	"shiftboard_worker_start", "shiftboard_session_close", "shiftboard_session_list",
 	"shiftboard_task_list", "shiftboard_brief_show", "shiftboard_rule_list", "shiftboard_pending_list",
 	"shiftboard_effect_list", "shiftboard_assignment_list", "shiftboard_resources_get", "shiftboard_handoff_readback",
 	"shiftboard_lock_list", "shiftboard_handoff_ack", "shiftboard_brief_update", "shiftboard_rule_add",
