@@ -367,6 +367,24 @@ func TestPanelViews(t *testing.T) {
 	}
 }
 
+// An unknown effect can only be reconciled by the lead, so opening its row
+// must open the lead instead of reporting nothing to open.
+func TestPanelEffectRowOpensLead(t *testing.T) {
+	var opened int64
+	prev := OpenLead
+	OpenLead = func(taskID int64, mode, provider string) error { opened = taskID; return nil }
+	defer func() { OpenLead = prev }()
+	p := panel{taskID: 7, width: 100, height: 30, menu: 3, inContent: true,
+		kids: []item{{kind: "effect", id: "E-4", text: "outcome UNKNOWN: x on y (lead must reconcile)"}}}
+	m, cmd := p.onKey("enter")
+	if msg := m.(panel).msg; msg != "" || cmd == nil {
+		t.Fatalf("effect row did nothing: %q", msg)
+	}
+	if got := cmd(); got != (actionMsg{msg: "quit"}) || opened != 7 {
+		t.Fatalf("got %v, opened %d", got, opened)
+	}
+}
+
 func TestAttentionPrefersWaitingAgent(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("AGENT_SHIFTBOARD_USER_DIR", t.TempDir())

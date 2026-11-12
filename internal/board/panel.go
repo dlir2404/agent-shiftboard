@@ -208,7 +208,8 @@ func (p panel) openRow(it item) (tea.Model, tea.Cmd) {
 	case it.pane != "" && Focus != nil:
 		pane := it.pane
 		return p, p.do(func() error { return Focus(pane) })
-	case it.kind == "agent" && it.role == "lead":
+	case it.kind == "agent" && it.role == "lead", it.kind == "effect":
+		// An unknown effect is reconciled by the lead from a read-only check.
 		return p, p.do(func() error { return callOpenLead(p.taskID, "auto", "") })
 	case it.worker != "" && OpenWorker != nil && it.status != "done":
 		id := it.worker

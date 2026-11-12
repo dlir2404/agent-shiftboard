@@ -482,7 +482,7 @@ func needsYou(ctx context.Context, c *coord.Coordinator, taskID int64) []item {
 	}
 	effs, _ := c.ListEffects(ctx, taskID, "unknown")
 	for _, e := range effs {
-		out = append(out, item{kind: "effect", id: e.ID, text: fmt.Sprintf("outcome UNKNOWN: %s on %s (lead must reconcile)", e.Action, e.Target)})
+		out = append(out, item{kind: "effect", id: e.ID, text: fmt.Sprintf("outcome UNKNOWN: %s on %s (lead must reconcile)", e.Action, e.Target), keys: "enter open the lead to reconcile"})
 	}
 	rules, _ := c.ListRules(ctx, taskID, false)
 	for _, r := range rules {
@@ -709,6 +709,9 @@ func (m model) onKey(it item, key string) (tea.Model, tea.Cmd) {
 		m.input = &input{purpose: "provider", taskID: it.task.ID}
 	case key == "enter" && it.kind == "question":
 		m.input = &input{purpose: "answer", id: it.id}
+	case key == "enter" && it.kind == "effect":
+		// Only the lead can check what happened and reconcile it.
+		return m, openLead(it.task.ID, "auto", "")
 	default:
 		return m, m.act(it, key)
 	}
