@@ -82,7 +82,7 @@ Coordinator (core state logic) ─────── SQLite
   ├── Claude adapter ───── official `claude` (interactive / `-p` stream)
   ├── Codex adapter ────── official `codex` TUI / `codex app-server` / `codex exec`
   ├── Antigravity adapter  official Google `agy`
-  └── Hermes adapter ───── official Nous `hermes`
+  └── Hermes adapter ───── official Nous `hermes acp` (ACP client in a tmux pane)
           │
           ▼
   tmux windows (interactive lead and workers) · os/exec (headless workers)
@@ -201,9 +201,20 @@ This is local coordinator policy, not distributed consensus. The database lease 
 
 ### Hermes Agent CLI (Phase 5)
 
-- Detect the official Nous `hermes` binary and version.
-- The documented CLI supports interactive TUI use, one-shot `hermes chat -q`, and native session resume by ID. Validate follow-up messaging, status signals, process control, and approval handling before promising equivalent support to other adapters.
-- Preserve the user's Hermes provider/model configuration; AgentShiftboard does not route requests or rewrite provider credentials.
+Hermes runs its agents inside a gateway process shared by every Hermes client on the machine (including chat platforms); the classic TUI only views it. Per-process overlays, shell hooks, and a separate profile were ruled out (D-29). AgentShiftboard drives Hermes through its documented Agent Client Protocol (`hermes acp`, JSON-RPC over stdio).
+
+- Detect the official Nous `hermes` binary and version, and `hermes acp --check`. Require the gateway capabilities that ACP reports for per-session MCP servers; otherwise the adapter is unavailable.
+- **Pane client.** A Hermes session is an `agent-shiftboard acp` client process in its own tmux window, which starts `hermes acp` as a child. It renders the streamed conversation (messages, tool calls, plans) for the user, takes the user's typed prompts, and shows Hermes's `session/request_permission` requests for the user to answer in that pane. It never answers a permission request itself, never selects a less strict edit-approval mode than Hermes's default (`ask`), and never passes `--yolo`. It keeps no transcript: what it displays, including the history Hermes replays on resume, stays on screen only.
+- **Environment.** `hermes acp` may start the shared gateway (`gateway run --idle-exit`), which inherits its environment and then serves other Hermes clients. The client starts it without `AGENT_SHIFTBOARD_*`, `CLAUDE*`, or `TMUX*` variables; the session's identity travels only in its MCP connection.
+- **Identity and MCP.** `session/new` (and `session/resume`) carries the shared server as an `http` MCP server with the session's token in an `Authorization` header (D-28). Hermes keeps only a fingerprint of the server list, never the header; a new token on resume makes Hermes rebind the server while the session is idle. Hermes continues without a server whose discovery fails, so the MCP server records when a session's token is first used, and the client warns when it is not used shortly after the first prompt.
+- **Native session.** The ACP `sessionId` returned by `session/new` is the native ID (Hermes does not accept a pre-assigned one). Resume uses `session/resume` with that ID. Closing an AgentShiftboard session ends the client; the Hermes session stays in the user's Hermes history.
+- **Launch context.** The first prompt names the launch context file, as for Codex.
+- **Status.** From the protocol only: a prompt in flight → `running`; a pending permission request → `waiting_for_approval`; the prompt's response (`end_turn`, `cancelled`) → `idle`; a JSON-RPC error with a documented quota, rate-limit, or authentication meaning → that status; anything else → `unknown`; the client or `hermes acp` exiting → `stopped`/`failed`. Error text is not parsed.
+- **Work items.** ACP `plan` updates are mirrored like the other providers' todo lists.
+- **Messages (D-25).** The client knows exactly whether its input line is empty and whether a permission request is open, so it delivers queued messages to its own session under the D-25 guards instead of the board typing into its pane.
+- **Side effects.** ACP reports a tool call only as it starts and offers no blocking hook outside Hermes's permission requests, so side-effect enforcement is `unknown`; the launch context still requires effect records.
+- **Order.** Workers first (any provider's lead can delegate to Hermes). Hermes as lead follows once the worker path has passed live tests, since the same client is interactive and the handoff readback goes through MCP.
+- Preserve the user's Hermes provider/model configuration; AgentShiftboard does not route requests, rewrite provider credentials, or change the session's model.
 
 ### Adapter contract
 
