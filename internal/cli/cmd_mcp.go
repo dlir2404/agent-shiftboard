@@ -230,15 +230,7 @@ func (a *app) ensureMCPServer(ctx context.Context, root string) (string, error) 
 	if addr := readMCPAddr(root); addr != "" && mcpAnswers(ctx, addr, root) {
 		return mcpURL(addr), nil
 	}
-	if !tmux.Available() {
-		return "", tmux.ErrNoTmux
-	}
-	ws := tmux.New(tmux.Exec{}, root)
-	if !ws.Exists() {
-		return "", errors.New("the workspace is not running")
-	}
-	// A server process, not an agent session: no session variable.
-	if _, err := ws.RunHidden("mcp", map[string]string{"AGENT_SHIFTBOARD_PROJECT": root}, []string{ws.Self, "mcp", "--serve"}); err != nil {
+	if err := startMCPServer(root); err != nil {
 		return "", err
 	}
 	deadline := time.Now().Add(mcpStartTimeout)
@@ -255,6 +247,46 @@ func (a *app) ensureMCPServer(ctx context.Context, root string) (string, error) 
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// startMCPServer starts the shared server in the workspace's hidden "mcp"
+// window without waiting for it. A window whose server still runs (for
+// example while it starts) is left alone; a dead one is respawned.
+func startMCPServer(root string) error {
+	if !tmux.Available() {
+		return tmux.ErrNoTmux
+	}
+	ws := tmux.New(tmux.Exec{}, root)
+	if !ws.Exists() {
+		return errors.New("the workspace is not running")
+	}
+	// A server process, not an agent session: no session variable.
+	_, err := ws.RunHidden("mcp", map[string]string{"AGENT_SHIFTBOARD_PROJECT": root}, []string{ws.Self, "mcp", "--serve"})
+	return err
+}
+
+// mcpRestartGap spaces out the board's restarts of a server that keeps
+// dying, so a broken server is not respawned on every refresh.
+var mcpRestartGap = 30 * time.Second
+
+var lastMCPRestart time.Time
+
+// keepMCPServer runs on the board's refresh: while any session holds a
+// token for the shared MCP server and the server does not answer (it
+// crashed or its window was closed), it starts it again on the recorded
+// port, so configured sessions reconnect. It never waits for the server.
+func keepMCPServer(ctx context.Context, c *coord.Coordinator) {
+	if time.Since(lastMCPRestart) < mcpRestartGap {
+		return
+	}
+	if in, err := c.SharedMCPInUse(ctx); err != nil || !in {
+		return
+	}
+	if addr := readMCPAddr(c.Root); addr != "" && mcpAnswers(ctx, addr, c.Root) {
+		return
+	}
+	lastMCPRestart = time.Now()
+	_ = startMCPServer(c.Root)
 }
 
 // connectMCP points a session about to be launched or resumed at the

@@ -74,3 +74,13 @@ func (c *Coordinator) RevokeMCPToken(ctx context.Context, sessionID string) erro
 	_, err := c.DB.ExecContext(ctx, `UPDATE sessions SET mcp_token_hash='' WHERE id=?`, sessionID)
 	return err
 }
+
+// SharedMCPInUse reports whether any session holds a token for the shared
+// MCP server: a live session configured for it, or one being launched or
+// resumed. Tokens are revoked when a session ends, so ended sessions never
+// count.
+func (c *Coordinator) SharedMCPInUse(ctx context.Context) (bool, error) {
+	var n int
+	err := c.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE mcp_token_hash!=''`).Scan(&n)
+	return n > 0, err
+}

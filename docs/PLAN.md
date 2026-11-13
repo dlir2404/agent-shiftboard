@@ -66,7 +66,7 @@ tmux session per project ── lead's native CLI pane │ Bubble Tea board pane
   ▼
 AgentShiftboard entry points (each runs the coordinator in-process)
   ├─ Cobra CLI and state subcommands
-  ├─ MCP server (one per project: `mcp --serve` in the hidden window "mcp", HTTP on 127.0.0.1, per-session tokens; stdio for hand-started sessions)
+  ├─ MCP server (one per project: `mcp --serve` in the hidden window "mcp", restarted by the board while sessions use it; HTTP on 127.0.0.1, per-session tokens; stdio for hand-started sessions)
   ├─ provider hook handlers
   └─ Bubble Tea board
   │

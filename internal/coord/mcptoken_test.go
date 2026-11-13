@@ -15,6 +15,9 @@ func TestMCPTokens(t *testing.T) {
 	aid := must(f.c.CreateAssignment(f.ctx, lead, AssignmentInput{TaskID: id, Scope: "x"}))
 	wid := must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "codex"}))
 
+	if in, err := f.c.SharedMCPInUse(f.ctx); err != nil || in {
+		t.Fatalf("shared server in use before any token: %v %v", in, err)
+	}
 	if _, err := f.c.IssueMCPToken(f.ctx, "no-such-session"); err == nil {
 		t.Fatal("token issued for an unknown session")
 	}
@@ -31,6 +34,9 @@ func TestMCPTokens(t *testing.T) {
 	}
 	if a := must(f.c.SessionForToken(f.ctx, lt)); a.SessionID != lead.SessionID {
 		t.Fatalf("lead token resolves to %v", a)
+	}
+	if !must(f.c.SharedMCPInUse(f.ctx)) {
+		t.Fatal("shared server not in use with live tokens")
 	}
 	if a := must(f.c.SessionForToken(f.ctx, wt)); a.SessionID != wid {
 		t.Fatalf("worker token resolves to %v", a)
@@ -85,5 +91,9 @@ func TestMCPTokens(t *testing.T) {
 	ok(t, f.c.CancelPendingHandoff(f.ctx, User, id))
 	if _, err := f.c.SessionForToken(f.ctx, nt); !errors.Is(err, ErrBadMCPToken) {
 		t.Fatalf("abandoned lead's token still works: %v", err)
+	}
+	ok(t, f.c.RevokeMCPToken(f.ctx, lead.SessionID))
+	if must(f.c.SharedMCPInUse(f.ctx)) {
+		t.Fatal("shared server still in use after every token was revoked")
 	}
 }

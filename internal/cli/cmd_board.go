@@ -29,7 +29,10 @@ func (a *app) boardCmd() *cobra.Command {
 					_, _ = ws.R.Run("source-file", tmux.ConfigPath) // keys from an upgrade
 				}
 			}
-			board.Refresh = reconcilePanes
+			board.Refresh = func(ctx context.Context, c *coord.Coordinator) {
+				reconcilePanes(ctx, c)
+				keepMCPServer(ctx, c)
+			}
 			return board.Run(func(ctx context.Context) (*coord.Coordinator, error) { return a.open(ctx) }, a.task)
 		},
 	}
