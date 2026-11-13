@@ -3,8 +3,10 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,22 +32,13 @@ func Open(path string) (*sql.DB, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
-	}
-	if err := addColumns(db); err != nil {
+	if err := applySchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
 	var v string
 	err = db.QueryRow(`SELECT value FROM meta WHERE key='schema_version'`).Scan(&v)
 	switch {
-	case err == sql.ErrNoRows:
-		if _, err := db.Exec(`INSERT INTO meta(key,value) VALUES('schema_version',?)`, SchemaVersion); err != nil {
-			db.Close()
-			return nil, err
-		}
 	case err != nil:
 		db.Close()
 		return nil, err
@@ -64,23 +57,48 @@ var addedColumns = []struct{ table, column, decl string }{
 	{"messages", "claimed_at", "TEXT NOT NULL DEFAULT ''"},
 }
 
-func addColumns(db *sql.DB) error {
+// schemaHash identifies the schema and added columns this binary applies.
+var schemaHash = func() string {
+	h := sha256.New()
+	h.Write([]byte(schema))
 	for _, c := range addedColumns {
-		// Check and add in one write transaction (BEGIN IMMEDIATE), so two
-		// processes opening an old database do not both add the column.
-		err := Tx(context.Background(), db, func(tx *sql.Tx) error {
-			var n int
-			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.column).Scan(&n); err != nil || n > 0 {
-				return err
-			}
-			_, err := tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl))
-			return err
-		})
-		if err != nil {
+		fmt.Fprintf(h, "\n%s.%s %s", c.table, c.column, c.decl)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}()
+
+// applySchema brings the database to this binary's schema. Every hook, CLI
+// call, and MCP request opens the database, so an up-to-date database is
+// only read here: no write lock. Otherwise the schema and the added
+// columns are applied in one write transaction (BEGIN IMMEDIATE, which
+// waits on busy_timeout), so concurrent opens of an old database do not
+// race each other.
+func applySchema(db *sql.DB) error {
+	var have string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key='schema_hash'`).Scan(&have); err == nil && have == schemaHash {
+		return nil
+	}
+	return Tx(context.Background(), db, func(tx *sql.Tx) error {
+		if _, err := tx.Exec(schema); err != nil {
 			return err
 		}
-	}
-	return nil
+		for _, c := range addedColumns {
+			var n int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?`, c.table, c.column).Scan(&n); err != nil {
+				return err
+			}
+			if n == 0 {
+				if _, err := tx.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", c.table, c.column, c.decl)); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO meta(key,value) VALUES('schema_version',?)`, SchemaVersion); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`INSERT INTO meta(key,value) VALUES('schema_hash',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, schemaHash)
+		return err
+	})
 }
 
 // Tx runs fn in a short write transaction.

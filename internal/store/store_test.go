@@ -11,7 +11,8 @@ import (
 // A database created before claimed_at existed gets the column on open.
 func TestOpenAddsColumnsToExistingTables(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	old, err := sql.Open("sqlite", path)
+	// Databases AgentShiftboard created are in WAL mode.
+	old, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +39,8 @@ func TestOpenAddsColumnsToExistingTables(t *testing.T) {
 // Several processes opening an old database at once all succeed.
 func TestConcurrentUpgrade(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.db")
-	old, err := sql.Open("sqlite", path)
+	// Databases AgentShiftboard created are in WAL mode.
+	old, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)")
 	if err != nil {
 		t.Fatal(err)
 	}
