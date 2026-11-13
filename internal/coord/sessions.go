@@ -378,7 +378,8 @@ func (c *Coordinator) applyObservation(tx *sql.Tx, s sessionInfo, status, reason
 	if status == "stopped" || status == "failed" {
 		// tmux reuses pane IDs (for example after a server restart); a
 		// pane ID must never point at another process's pane.
-		if _, err := tx.Exec(`UPDATE sessions SET pane_id='',pid=0 WHERE id=?`, s.ID); err != nil {
+		// Its MCP token is revoked with it (D-28).
+		if _, err := tx.Exec(`UPDATE sessions SET pane_id='',pid=0,mcp_token_hash='' WHERE id=?`, s.ID); err != nil {
 			return err
 		}
 	}
@@ -646,7 +647,7 @@ func (c *Coordinator) Sweep(ctx context.Context) error {
 			if p.holder == "" {
 				state = "vacant"
 			}
-			if _, err := tx.Exec(`UPDATE sessions SET status='failed',reason='unknown',observed_at=? WHERE id=?`, c.now(), p.pending); err != nil {
+			if _, err := tx.Exec(`UPDATE sessions SET status='failed',reason='unknown',observed_at=?,mcp_token_hash='' WHERE id=?`, c.now(), p.pending); err != nil {
 				return err
 			}
 			if err := c.setLease(tx, p.task, state, p.holder, "", "handoff acknowledgement timed out for "+p.pending); err != nil {
@@ -760,7 +761,7 @@ func (c *Coordinator) CancelPendingHandoff(ctx context.Context, a Actor, taskID 
 		if l.State != "handoff_pending" {
 			return fmt.Errorf("task #%d has no pending handoff", taskID)
 		}
-		if _, err := tx.Exec(`UPDATE sessions SET status='failed',reason='user_stopped',observed_at=? WHERE id=?`, c.now(), l.Pending); err != nil {
+		if _, err := tx.Exec(`UPDATE sessions SET status='failed',reason='user_stopped',observed_at=?,mcp_token_hash='' WHERE id=?`, c.now(), l.Pending); err != nil {
 			return err
 		}
 		state := "suspended"

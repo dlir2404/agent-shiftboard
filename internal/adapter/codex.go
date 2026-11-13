@@ -52,16 +52,32 @@ var codexHookEvents = []struct {
 // CodexConfigOverrides builds invocation-scoped config overrides. Codex
 // merges hook sources across config layers, while these entries add only
 // AgentShiftboard's named MCP server and hook handlers for this process.
+//
+// With MCPURL set, the server is the project's shared streamable HTTP
+// server (D-28): Codex's documented `url` and `http_headers` keys carry the
+// address and the session's bearer token. The token is a static header in
+// the launch command rather than `bearer_token_env_var`, because an
+// environment variable would be visible to every command the agent runs.
+// Without MCPURL Codex starts a stdio server for the session.
 func CodexConfigOverrides(s LaunchSpec) []string {
-	args := []string{
-		"-C", s.Root,
-		"-c", "mcp_servers.agent_shiftboard.command=" + tomlString(s.Self),
-		"-c", "mcp_servers.agent_shiftboard.args=[\"mcp\"]",
-		"-c", "mcp_servers.agent_shiftboard.cwd=" + tomlString(s.Root),
-		"-c", "mcp_servers.agent_shiftboard.env={\"AGENT_SHIFTBOARD_SESSION_ID\"=" + tomlString(s.SessionID) + ",\"AGENT_SHIFTBOARD_PROJECT\"=" + tomlString(s.Root) + "}",
-		"-c", "mcp_servers.agent_shiftboard.default_tools_approval_mode=\"approve\"",
-		"-c", "mcp_servers.agent_shiftboard.enabled_tools=" + tomlStringArray(codexAgentShiftboardTools),
+	args := []string{"-C", s.Root}
+	if s.MCPURL != "" {
+		args = append(args,
+			"-c", "mcp_servers.agent_shiftboard.url="+tomlString(s.MCPURL),
+			"-c", "mcp_servers.agent_shiftboard.http_headers={\"Authorization\"="+tomlString("Bearer "+s.MCPToken)+"}",
+		)
+	} else {
+		args = append(args,
+			"-c", "mcp_servers.agent_shiftboard.command="+tomlString(s.Self),
+			"-c", "mcp_servers.agent_shiftboard.args=[\"mcp\"]",
+			"-c", "mcp_servers.agent_shiftboard.cwd="+tomlString(s.Root),
+			"-c", "mcp_servers.agent_shiftboard.env={\"AGENT_SHIFTBOARD_SESSION_ID\"="+tomlString(s.SessionID)+",\"AGENT_SHIFTBOARD_PROJECT\"="+tomlString(s.Root)+"}",
+		)
 	}
+	args = append(args,
+		"-c", "mcp_servers.agent_shiftboard.default_tools_approval_mode=\"approve\"",
+		"-c", "mcp_servers.agent_shiftboard.enabled_tools="+tomlStringArray(codexAgentShiftboardTools),
+	)
 	for _, hook := range codexHookEvents {
 		command := shellQuote(s.Self) + " hook codex " + hook.event
 		handler := "{type=\"command\",command=" + tomlString(command) + ",timeout=10"

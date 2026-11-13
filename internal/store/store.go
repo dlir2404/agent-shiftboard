@@ -55,6 +55,7 @@ func Open(path string) (*sql.DB, error) {
 // are added here; each is additive with a default, so no version bump.
 var addedColumns = []struct{ table, column, decl string }{
 	{"messages", "claimed_at", "TEXT NOT NULL DEFAULT ''"},
+	{"sessions", "mcp_token_hash", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // schemaHash identifies the schema and added columns this binary applies.

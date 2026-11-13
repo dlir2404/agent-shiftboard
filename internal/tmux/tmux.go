@@ -207,6 +207,28 @@ func (w Workspace) OpenWindow(name string, env map[string]string, command []stri
 	return pane, nil
 }
 
+// RunHidden makes sure a hidden window named name runs command: it starts
+// the window when there is none and respawns its pane when the command has
+// exited; a window whose command is still running is left alone. It returns
+// the pane ID.
+func (w Workspace) RunHidden(name string, env map[string]string, command []string) (string, error) {
+	out, err := w.R.Run("list-windows", "-t", w.Session+":", "-F", "#{window_name}\t#{pane_id}\t#{pane_dead}")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		f := strings.Split(line, "\t")
+		if len(f) != 3 || f[0] != name {
+			continue
+		}
+		if f[2] == "1" {
+			return f[1], w.Respawn(f[1], env, command)
+		}
+		return f[1], nil
+	}
+	return w.OpenWindow(name, env, command, false)
+}
+
 // Shown returns the pane on the right of the main window.
 func (w Workspace) Shown() (string, error) {
 	return w.R.Run("display-message", "-p", "-t", w.Session+":main.1", "#{pane_id}")

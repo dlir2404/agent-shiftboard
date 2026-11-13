@@ -102,6 +102,7 @@ func (a *app) startWorker(ctx context.Context, c *coord.Coordinator, actor coord
 	spec.Role = "worker"
 	spec.LaunchContext = ctxFile
 	spec.InitialPrompt = "Begin your AgentShiftboard assignment " + aid + " now, following the instructions you were given."
+	a.connectMCP(ctx, c, &spec)
 	command, err := p.Launch(spec)
 	if err != nil {
 		return "", "", err
@@ -152,6 +153,7 @@ func (a *app) resumeWorker(ctx context.Context, ws tmux.Workspace, sid string) e
 	spec := a.launchSpec(c, sid, s.NativeSessionID, s.Provider)
 	spec.Role = "worker"
 	spec.LaunchContext = filepath.Join(sessionDir(c.Root, sid), "launch.md")
+	a.connectMCP(ctx, c, &spec)
 	command, err := p.Resume(spec)
 	if err != nil {
 		return err

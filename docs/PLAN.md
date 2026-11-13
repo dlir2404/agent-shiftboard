@@ -44,7 +44,7 @@ The public landscape is already active. See [LANDSCAPE.md](LANDSCAPE.md); partic
 |---|---|---|
 | Language | Go | Produces a straightforward local binary with strong subprocess and terminal support; the coordinator runs inside short-lived CLI, hook, MCP, and TUI processes. |
 | CLI commands | Cobra | Clear command tree for project, task, agent, state, resource, and handoff commands (§9). |
-| Agent state interface | `agent-shiftboard` state subcommands and an MCP server (stdio) exposing the same operations | One write path for every provider (D-16). |
+| Agent state interface | `agent-shiftboard` state subcommands and an MCP server exposing the same operations: one Streamable HTTP server per project on 127.0.0.1 with a per-session token (D-28), or stdio for a session the user starts by hand | One write path for every provider (D-16). |
 | TUI | Bubble Tea with Lip Gloss | Status board beside the lead's native CLI pane, agent activity, and handoff prompts (D-15). |
 | Session host | tmux | Hosts native interactive CLIs, keeps them alive across terminal/TUI restarts, and supports the fixed workspace layout and pane swaps (D-14, D-15). |
 | Local metadata | SQLite through `modernc.org/sqlite` | Transactional local state without a service or CGO setup. Use migrations and short write transactions. |
@@ -66,7 +66,7 @@ tmux session per project ── lead's native CLI pane │ Bubble Tea board pane
   ▼
 AgentShiftboard entry points (each runs the coordinator in-process)
   ├─ Cobra CLI and state subcommands
-  ├─ MCP server (stdio, started by each agent CLI)
+  ├─ MCP server (one per project: `mcp --serve` in the hidden window "mcp", HTTP on 127.0.0.1, per-session tokens; stdio for hand-started sessions)
   ├─ provider hook handlers
   └─ Bubble Tea board
   │

@@ -86,3 +86,31 @@ func TestTodoCall(t *testing.T) {
 		t.Fatalf("TaskUpdate: %+v", one)
 	}
 }
+
+// With the shared server (D-28) Codex gets the documented streamable HTTP
+// keys (url, http_headers) instead of a stdio command, and keeps its tool
+// allowlist and approval mode.
+func TestCodexHTTPMCPOverrides(t *testing.T) {
+	s := LaunchSpec{SessionID: "sid", Root: "/p", Self: "/bin/agent-shiftboard", MCPURL: "http://127.0.0.1:4242/mcp", MCPToken: "tok-secret"}
+	got := strings.Join(CodexConfigOverrides(s), "\n")
+	for _, want := range []string{
+		`mcp_servers.agent_shiftboard.url="http://127.0.0.1:4242/mcp"`,
+		`mcp_servers.agent_shiftboard.http_headers={"Authorization"="Bearer tok-secret"}`,
+		`mcp_servers.agent_shiftboard.default_tools_approval_mode="approve"`,
+		`mcp_servers.agent_shiftboard.enabled_tools=["shiftboard_worker_start"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"agent_shiftboard.command", "agent_shiftboard.args", "agent_shiftboard.env", "bearer_token_env_var"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("must not contain %q:\n%s", bad, got)
+		}
+	}
+	s.MCPURL, s.MCPToken = "", ""
+	got = strings.Join(CodexConfigOverrides(s), "\n")
+	if !strings.Contains(got, `agent_shiftboard.command="/bin/agent-shiftboard"`) || strings.Contains(got, "agent_shiftboard.url") || strings.Contains(got, "http_headers") {
+		t.Fatalf("stdio overrides:\n%s", got)
+	}
+}

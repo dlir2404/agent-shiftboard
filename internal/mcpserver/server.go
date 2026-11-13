@@ -1,5 +1,7 @@
 // Package mcpserver exposes AgentShiftboard's read and agent operations over
-// MCP (stdio). User operations are deliberately absent (D-16).
+// MCP: stdio for one session, or Streamable HTTP for every session of a
+// project, each authenticated by its own token (D-28). User operations are
+// deliberately absent (D-16).
 package mcpserver
 
 import (
@@ -26,14 +28,21 @@ type Ops struct {
 	SessionList  func(context.Context, *coord.Coordinator, coord.Actor, int64) ([]coord.SessionView, error)
 }
 
-// New builds the server. Each tool call opens the coordinator, acts as the
-// session named in the environment, and closes it again.
+// New builds the stdio server. Each tool call opens the coordinator, acts as
+// the session named in the environment, and closes it again.
 func New(version string, open Opener, ops ...*Ops) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "agent-shiftboard", Version: version}, nil)
-	r := registrar{s: s, open: open}
+	var o *Ops
 	if len(ops) > 0 {
-		r.ops = ops[0]
+		o = ops[0]
 	}
+	return newServer(version, open, o, nil)
+}
+
+// newServer builds a server whose tools act as actor, or (nil) as the
+// session named in the environment.
+func newServer(version string, open Opener, ops *Ops, actor *coord.Actor) *mcp.Server {
+	s := mcp.NewServer(&mcp.Implementation{Name: "agent-shiftboard", Version: version}, nil)
+	r := registrar{s: s, open: open, ops: ops, actor: actor}
 	r.register()
 	return s
 }
@@ -42,6 +51,22 @@ type registrar struct {
 	s    *mcp.Server
 	open Opener
 	ops  *Ops
+	// actor is the session this server acts for (the shared HTTP server
+	// builds one server per session); nil means the session named in the
+	// environment (stdio).
+	actor *coord.Actor
+}
+
+// caller returns the session a tool call acts for. Over HTTP the request's
+// verified token must belong to the server's session as well.
+func (r registrar) caller(req *mcp.CallToolRequest) (coord.Actor, error) {
+	if r.actor == nil {
+		return coord.ActorFromEnv(), nil
+	}
+	if req == nil || req.Extra == nil || req.Extra.TokenInfo == nil || req.Extra.TokenInfo.UserID != r.actor.SessionID {
+		return coord.User, coord.ErrNoSession
+	}
+	return *r.actor, nil
 }
 
 // Task selects a task; 0 means the calling session's own task.
@@ -55,13 +80,16 @@ type ID struct {
 
 func add[In any](r registrar, name, desc string, fn func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in In) (any, error)) {
 	mcp.AddTool(r.s, &mcp.Tool{Name: "shiftboard_" + name, Description: desc},
-		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+		func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
+			actor, err := r.caller(req)
+			if err != nil {
+				return nil, nil, err
+			}
 			c, err := r.open(ctx)
 			if err != nil {
 				return nil, nil, err
 			}
 			defer c.Close()
-			actor := coord.ActorFromEnv()
 			if err := c.CheckMCPCaller(ctx, actor); err != nil {
 				return nil, nil, err
 			}

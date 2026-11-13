@@ -73,3 +73,50 @@ func TestWriteScriptReadsContextFromFile(t *testing.T) {
 		t.Fatalf("script:\n%s\nwant %s", b, want)
 	}
 }
+
+// With the shared server (D-28) the MCP config is an http server carrying
+// the session's token in a header; otherwise a stdio server of its own.
+// The token never reaches the settings file or the environment.
+func TestClaudeMCPConfigShapes(t *testing.T) {
+	dir := t.TempDir()
+	s := LaunchSpec{SessionID: "s1", NativeID: "n1", Root: "/p", Self: "/bin/agent-shiftboard", SessionDir: dir,
+		MCPURL: "http://127.0.0.1:4242/mcp", MCPToken: "tok-secret"}
+	if _, err := ClaudeLaunch(s); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dir + "/claude-mcp.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	srv := cfg.MCPServers["agent-shiftboard"]
+	if srv["type"] != "http" || srv["url"] != "http://127.0.0.1:4242/mcp" || srv["command"] != nil || srv["env"] != nil {
+		t.Fatalf("http config: %s", b)
+	}
+	if h, _ := srv["headers"].(map[string]any); h["Authorization"] != "Bearer tok-secret" {
+		t.Fatalf("headers: %s", b)
+	}
+	if fi, _ := os.Stat(dir + "/claude-mcp.json"); fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	settings, _ := os.ReadFile(dir + "/claude-settings.json")
+	if strings.Contains(string(settings), "tok-secret") {
+		t.Fatal("token leaked into the settings file")
+	}
+	for _, v := range s.Env() {
+		if strings.Contains(v, "tok-secret") {
+			t.Fatal("token leaked into the environment")
+		}
+	}
+
+	s.MCPURL, s.MCPToken = "", ""
+	b, _ = json.Marshal(ClaudeMCPConfig(s))
+	if got := string(b); !strings.Contains(got, `"type":"stdio"`) || !strings.Contains(got, `"args":["mcp"]`) || strings.Contains(got, "headers") {
+		t.Fatalf("stdio config: %s", got)
+	}
+}

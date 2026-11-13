@@ -107,3 +107,46 @@ func TestTypeLinePastesThenSubmits(t *testing.T) {
 		t.Fatalf("calls:\n%s", strings.Join(got, "\n"))
 	}
 }
+
+type windows struct {
+	fake
+	list string
+}
+
+func (f *windows) Run(args ...string) (string, error) {
+	if args[0] == "list-windows" {
+		f.calls = append(f.calls, args)
+		return f.list, nil
+	}
+	return f.fake.Run(args...)
+}
+
+// RunHidden starts a missing window, respawns a dead one, and leaves a
+// running one alone.
+func TestRunHidden(t *testing.T) {
+	for _, tc := range []struct{ list, pane, cmd string }{
+		{"main\t%0\t0", "%7", "new-window"},
+		{"main\t%0\t0\nmcp\t%3\t1", "%3", "respawn-pane"},
+		{"main\t%0\t0\nmcp\t%3\t0", "%3", ""},
+	} {
+		f := &windows{list: tc.list}
+		w := Workspace{R: f, Session: "asb-p", Root: "/p", Self: "/bin/agent-shiftboard"}
+		pane, err := w.RunHidden("mcp", map[string]string{"AGENT_SHIFTBOARD_PROJECT": "/p"}, []string{"/bin/agent-shiftboard", "mcp", "--serve"})
+		if err != nil || pane != tc.pane {
+			t.Fatalf("%q: pane %q err %v", tc.list, pane, err)
+		}
+		var ran []string
+		for _, c := range f.calls[1:] {
+			ran = append(ran, c[0])
+		}
+		joined := strings.Join(ran, " ")
+		if tc.cmd == "" && joined != "" || tc.cmd != "" && !strings.HasPrefix(joined, tc.cmd) {
+			t.Fatalf("%q: ran %v", tc.list, ran)
+		}
+		for _, c := range f.calls {
+			if strings.Contains(strings.Join(c, " "), "AGENT_SHIFTBOARD_SESSION_ID") {
+				t.Fatalf("session variable passed: %v", c)
+			}
+		}
+	}
+}

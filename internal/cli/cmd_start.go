@@ -249,6 +249,7 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode, provider stri
 		p, _ := adapter.Get(holder.Provider)
 		sid = holder.ID
 		spec = a.launchSpec(c, sid, holder.NativeSessionID, holder.Provider)
+		a.connectMCP(ctx, c, &spec)
 		if command, err = p.Resume(spec); err != nil {
 			c.Close()
 			return err
@@ -280,6 +281,7 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode, provider stri
 		}
 		spec = a.launchSpec(c, sid, native, provider)
 		spec.Role, spec.LaunchContext = "lead", launch
+		a.connectMCP(ctx, c, &spec)
 		if command, err = p.Launch(spec); err != nil {
 			c.Close()
 			return err

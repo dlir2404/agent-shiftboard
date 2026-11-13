@@ -23,6 +23,13 @@ type LaunchSpec struct {
 	InitialPrompt  string // first user turn for a new session
 	PermissionMode string // from user policy; empty keeps the CLI's own settings
 	Role           string // lead | worker
+	// MCPURL and MCPToken connect the session to the project's shared MCP
+	// server (D-28). The token is a credential: it goes only into the
+	// session's 0600 MCP configuration or the launch command, never into
+	// Env (the agent's tools would see it), task state, or logs. Without
+	// MCPURL the session starts its own stdio server.
+	MCPURL   string
+	MCPToken string
 }
 
 // Env returns the environment for the session's window and MCP server.
@@ -89,8 +96,21 @@ func ClaudeSettings(s LaunchSpec) map[string]any {
 	}
 }
 
-// ClaudeMCPConfig builds the per-session --mcp-config file content.
+// ClaudeMCPConfig builds the per-session --mcp-config file content: the
+// shared HTTP server with the session's token when MCPURL is set, else a
+// stdio server of its own.
 func ClaudeMCPConfig(s LaunchSpec) map[string]any {
+	if s.MCPURL != "" {
+		return map[string]any{
+			"mcpServers": map[string]any{
+				"agent-shiftboard": map[string]any{
+					"type":    "http",
+					"url":     s.MCPURL,
+					"headers": map[string]string{"Authorization": "Bearer " + s.MCPToken},
+				},
+			},
+		}
+	}
 	return map[string]any{
 		"mcpServers": map[string]any{
 			"agent-shiftboard": map[string]any{
