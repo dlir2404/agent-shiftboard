@@ -127,6 +127,8 @@ These decisions define AgentShiftboard's product boundaries and explain the main
 
 **Amendment (2026-11-12, live test):** Claude Code moved a running lead conversation into a background process (`--fork-session --resume`) that kept `--settings` and `--mcp-config` but not the launch environment. Its hooks then reported nothing (the lease was suspended as `unknown`), and its shell commands were treated as the user's, since neither the session variable nor the recorded ancestor process matched. The session's identity now travels in the per-session settings file as well: an `env` block for the session's tools and the variables on each hook command line.
 
+**Amendment (2026-11-13):** a Hermes test showed an `agent-shiftboard mcp` server started by Hermes's shared gateway, with no session variable. It acted as the user, so any Hermes conversation on that gateway (including its Slack bot) could have recorded approvals or edited task state with the user's authority. The MCP server now refuses every call unless it acts for a live managed session.
+
 ## D-17 — Detect a stale brief from metadata and nudge the lead
 
 **Decision:** The coordinator flags a stale brief when Git HEAD moved past the recorded revision, too many turns passed since the last revision, or an external-action pattern matched without an intent record. It nudges through a documented hook output channel where available and always shows the flag on the board. It uses only hook/stream metadata and never stores command output or conversation content.

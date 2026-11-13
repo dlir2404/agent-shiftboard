@@ -89,6 +89,19 @@ func TestLifecycleToolsUseInjectedOps(t *testing.T) {
 		t.Fatal(err)
 	}
 	open := func(context.Context) (*coord.Coordinator, error) { return coord.Open(root) }
+	// Without a managed session the server refuses every call.
+	if res, err := callTool(t, New("test", open), "shiftboard_task_list", nil); err == nil && (res == nil || !res.IsError) {
+		t.Fatalf("a server without a session answered: %+v", res)
+	}
+	c, err := coord.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := c.CreateTask(ctx, coord.User, "t", "")
+	sid, _ := c.StartLead(ctx, coord.User, id, coord.SessionSpec{Provider: "claude"})
+	_ = c.AckHandoff(ctx, coord.Actor{SessionID: sid}, nil)
+	c.Close()
+	t.Setenv(coord.SessionEnv, sid)
 	call := func(ops *Ops, name string, args map[string]any) (*mcp.CallToolResult, error) {
 		var s *mcp.Server
 		if ops == nil {
@@ -130,4 +143,18 @@ func TestLifecycleToolsUseInjectedOps(t *testing.T) {
 	if err == nil && (res == nil || !res.IsError) {
 		t.Fatalf("missing ops should fail: %+v", res)
 	}
+}
+
+func callTool(t *testing.T, s *mcp.Server, name string, args map[string]any) (*mcp.CallToolResult, error) {
+	t.Helper()
+	ctx := context.Background()
+	ct, st := mcp.NewInMemoryTransports()
+	if _, err := s.Connect(ctx, st, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 }

@@ -42,6 +42,27 @@ func (a Actor) String() string {
 	return "session:" + a.SessionID
 }
 
+// ErrNoSession is returned by the MCP server when it was not started for a
+// managed session: it serves agent sessions only and never acts as the user.
+var ErrNoSession = errors.New("this AgentShiftboard MCP server was not started for a managed session, so it refuses every call; agents get it when AgentShiftboard launches them (the user works through the board and the CLI)")
+
+// CheckMCPCaller verifies that the MCP server acts for a live managed
+// session. A server started without one (for example by a shared agent
+// gateway) must not fall back to the user's authority.
+func (c *Coordinator) CheckMCPCaller(ctx context.Context, a Actor) error {
+	if a.IsUser() {
+		return ErrNoSession
+	}
+	s, err := loadSession(c.DB, a.SessionID)
+	if err != nil {
+		return fmt.Errorf("%w (%v)", ErrNoSession, err)
+	}
+	if s.Status == "stopped" || s.Status == "failed" {
+		return fmt.Errorf("session %s has ended; its MCP server no longer acts for it", a.SessionID)
+	}
+	return nil
+}
+
 // ErrUserOnly is returned when an agent session calls a user operation.
 var ErrUserOnly = errors.New("this is a user operation; it cannot run inside a managed agent session (use the board or your own terminal)")
 

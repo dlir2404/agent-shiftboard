@@ -93,3 +93,17 @@ func sessionByID(t *testing.T, f *fixture, task int64, id string) Session {
 	t.Fatalf("session %s not found", id)
 	return Session{}
 }
+
+func TestCheckMCPCaller(t *testing.T) {
+	f := newFixture(t)
+	_, lead := f.startLead(t)
+	if err := f.c.CheckMCPCaller(f.ctx, User); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("no session: %v", err)
+	}
+	if err := f.c.CheckMCPCaller(f.ctx, Actor{SessionID: "made-up"}); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("unknown session: %v", err)
+	}
+	ok(t, f.c.CheckMCPCaller(f.ctx, lead))
+	ok(t, f.c.Observe(f.ctx, lead, lead.SessionID, "stopped", "user_stopped", "process"))
+	fails(t, f.c.CheckMCPCaller(f.ctx, lead), "has ended")
+}

@@ -61,7 +61,11 @@ func add[In any](r registrar, name, desc string, fn func(ctx context.Context, c 
 				return nil, nil, err
 			}
 			defer c.Close()
-			out, err := fn(ctx, c, coord.ActorFromEnv(), in)
+			actor := coord.ActorFromEnv()
+			if err := c.CheckMCPCaller(ctx, actor); err != nil {
+				return nil, nil, err
+			}
+			out, err := fn(ctx, c, actor, in)
 			if err != nil {
 				return nil, nil, err
 			}
