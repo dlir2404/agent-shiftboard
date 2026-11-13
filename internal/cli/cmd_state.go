@@ -543,7 +543,7 @@ func (a *app) delegateCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return a.done("Created assignment "+id+". Start it with `agent-shiftboard worker start "+id+" --provider claude|codex` (MCP: shiftboard_worker_start).", map[string]string{"id": id})
+				return a.done("Created assignment "+id+". Start it with `agent-shiftboard worker start "+id+" --provider claude|codex|hermes` (MCP: shiftboard_worker_start).", map[string]string{"id": id})
 			})
 		},
 	}

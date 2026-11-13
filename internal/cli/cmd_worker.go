@@ -41,7 +41,7 @@ assignment, the rules in force, and the brief, and reports back with
 			})
 		},
 	}
-	start.Flags().StringVar(&provider, "provider", "claude", "provider CLI for the worker (claude, codex)")
+	start.Flags().StringVar(&provider, "provider", "claude", "provider CLI for the worker (claude, codex, hermes)")
 	cmd.AddCommand(start)
 	return cmd
 }

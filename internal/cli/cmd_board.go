@@ -148,7 +148,12 @@ func (a *app) wireWorkspace(ctx context.Context) (string, error) {
 	}
 	root := c.Root
 	c.Close()
-	board.Providers = adapter.Names()
+	board.Providers = adapter.LeadNames()
+	for _, n := range adapter.Names() {
+		if _, err := adapter.ACPAgentCommand(n); err == nil {
+			board.ClientDelivers[n] = true
+		}
+	}
 	if !tmux.Available() || (os.Getenv("TMUX") == "" && os.Getenv("AGENT_SHIFTBOARD_IN_WORKSPACE") == "") {
 		return root, nil
 	}

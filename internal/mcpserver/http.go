@@ -30,6 +30,11 @@ func HTTPHandler(version string, open Opener, ops *Ops) http.Handler {
 		if ti == nil || ti.UserID == "" {
 			return nil // unreachable behind RequireBearerToken; the SDK answers 400
 		}
+		// A new MCP session: the token is in use (D-29 checks this).
+		if c, err := open(r.Context()); err == nil {
+			_ = c.MarkMCPUsed(r.Context(), ti.UserID)
+			c.Close()
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		s, ok := servers[ti.UserID]

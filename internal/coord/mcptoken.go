@@ -34,7 +34,7 @@ func (c *Coordinator) IssueMCPToken(ctx context.Context, sessionID string) (stri
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
-	res, err := c.DB.ExecContext(ctx, `UPDATE sessions SET mcp_token_hash=? WHERE id=?`, hashMCPToken(token), sessionID)
+	res, err := c.DB.ExecContext(ctx, `UPDATE sessions SET mcp_token_hash=?,mcp_used_at='' WHERE id=?`, hashMCPToken(token), sessionID)
 	if err != nil {
 		return "", err
 	}
@@ -83,4 +83,21 @@ func (c *Coordinator) SharedMCPInUse(ctx context.Context) (bool, error) {
 	var n int
 	err := c.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE mcp_token_hash!=''`).Scan(&n)
 	return n > 0, err
+}
+
+// MarkMCPUsed records that a session's current token opened an MCP
+// session on the shared server, the first time only. An agent that runs
+// inside a shared backend may continue without a server it failed to
+// reach (Hermes does), so its client checks this (D-29).
+func (c *Coordinator) MarkMCPUsed(ctx context.Context, sessionID string) error {
+	_, err := c.DB.ExecContext(ctx, `UPDATE sessions SET mcp_used_at=? WHERE id=? AND mcp_used_at='' AND mcp_token_hash!=''`, c.now(), sessionID)
+	return err
+}
+
+// MCPUsed reports whether the session's current token has opened an MCP
+// session since it was issued.
+func (c *Coordinator) MCPUsed(ctx context.Context, sessionID string) (bool, error) {
+	var at string
+	err := c.DB.QueryRowContext(ctx, `SELECT mcp_used_at FROM sessions WHERE id=?`, sessionID).Scan(&at)
+	return at != "", err
 }

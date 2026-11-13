@@ -62,6 +62,9 @@ var (
 	Wake func(pane, text string) error
 	// ClosePane ends the CLI in a pane (finished workers).
 	ClosePane func(pane string) error
+	// ClientDelivers names providers whose AgentShiftboard pane client
+	// delivers queued messages itself, knowing its own input state (D-29).
+	ClientDelivers = map[string]bool{}
 )
 
 // Run starts the board. It refuses to run inside a managed agent session,
@@ -1519,22 +1522,36 @@ func relayMessages(ctx context.Context, c *coord.Coordinator, t coord.Task, ss [
 			continue
 		}
 		tried[m.To] = true
+		if ClientDelivers[s.Provider] {
+			continue // its pane client delivers it (D-29)
+		}
 		if !readyForTyping(s) {
 			continue
 		}
 		pane := s.PaneID
-		_, _ = c.DeliverMessage(ctx, m.ID, func(x coord.Message) error { return Wake(pane, messageLine(x)) })
+		_, _ = c.DeliverMessage(ctx, m.ID, func(x coord.Message) error { return Wake(pane, MessageLine(x)) })
 	}
 }
 
 // messageLine is the one line typed into the recipient's CLI.
-func messageLine(m coord.Message) string {
+// MessageLine is the one line a delivered message becomes in the
+// recipient's input.
+func MessageLine(m coord.Message) string { return messageLine(m, true) }
+
+// MessageLineMCP is the line for a session whose shell has no
+// AgentShiftboard identity (D-29): the reply hint names only the MCP tool.
+func MessageLineMCP(m coord.Message) string { return messageLine(m, false) }
+
+func messageLine(m coord.Message, cli bool) string {
 	if m.From == "" {
 		return fmt.Sprintf("AgentShiftboard %s from the user: %s", m.ID, m.Body)
 	}
 	from := m.From
 	if len(from) > 8 {
 		from = from[:8]
+	}
+	if !cli {
+		return fmt.Sprintf("AgentShiftboard %s from %s: %s (reply with the MCP tool shiftboard_message_send, to %s)", m.ID, m.FromLabel, m.Body, from)
 	}
 	return fmt.Sprintf("AgentShiftboard %s from %s: %s (reply: agent-shiftboard message send %s \"<text>\", or MCP shiftboard_message_send)", m.ID, m.FromLabel, m.Body, from)
 }

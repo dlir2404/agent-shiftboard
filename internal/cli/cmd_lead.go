@@ -79,7 +79,7 @@ func (a *app) openLeadCmd(ctx context.Context, c *coord.Coordinator, actor coord
 		return coord.ErrUserOnly
 	}
 	if provider != "" {
-		if _, err := adapter.Get(provider); err != nil {
+		if err := adapter.CanLead(provider); err != nil {
 			return err
 		}
 	}

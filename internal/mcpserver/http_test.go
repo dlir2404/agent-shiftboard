@@ -106,6 +106,12 @@ func TestHTTPHandlerActsAsTokenSession(t *testing.T) {
 	if _, err := connectHTTP(ctx, srv.URL, "wrong"); err == nil {
 		t.Fatal("client with a wrong token connected")
 	}
+	if c, _ := open(ctx); c != nil {
+		if used, _ := c.MCPUsed(ctx, lead); used {
+			t.Fatal("refused requests marked the token used")
+		}
+		c.Close()
+	}
 
 	// Two tokens act as two sessions: each sees the other as its target.
 	lc, err := connectHTTP(ctx, srv.URL, leadTok)
@@ -120,6 +126,12 @@ func TestHTTPHandlerActsAsTokenSession(t *testing.T) {
 	defer wc.Close()
 	if got := targetsOf(t, lc); len(got) != 1 || got[0] != worker {
 		t.Fatalf("lead's targets: %v", got)
+	}
+	if c, _ := open(ctx); c != nil {
+		if used, _ := c.MCPUsed(ctx, lead); !used {
+			t.Fatal("a connected token is not marked used")
+		}
+		c.Close()
 	}
 	if got := targetsOf(t, wc); len(got) != 1 || got[0] != lead {
 		t.Fatalf("worker's targets: %v", got)

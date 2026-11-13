@@ -99,10 +99,10 @@ func (a *app) startOnce(ctx context.Context, taskID int64, mode, provider string
 		case "l":
 			mode = "new"
 		case "s":
-			fmt.Fprintf(a.out, "New lead CLI (%s): ", strings.Join(adapter.Names(), ", "))
+			fmt.Fprintf(a.out, "New lead CLI (%s): ", strings.Join(adapter.LeadNames(), ", "))
 			name, _ := in.ReadString('\n')
 			name = strings.TrimSpace(name)
-			if _, err := adapter.Get(name); err != nil {
+			if err := adapter.CanLead(name); err != nil {
 				fmt.Fprintln(a.errOut, err)
 				continue
 			}
@@ -258,6 +258,10 @@ func (a *app) runLeadHere(ctx context.Context, taskID int64, mode, provider stri
 	} else {
 		if provider == "" {
 			provider = a.defaultProvider(c)
+		}
+		if err := adapter.CanLead(provider); err != nil {
+			c.Close()
+			return err
 		}
 		p, err := adapter.Get(provider)
 		if err != nil {

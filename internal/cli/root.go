@@ -55,12 +55,33 @@ func (a *app) rootCmd() *cobra.Command {
 		Version:       Version,
 	}
 	root.PersistentFlags().BoolVar(&a.json, "json", false, "print JSON")
+	// A command run inside an agent backend shared across conversations
+	// (Hermes's gateway) without a session identity is an agent that
+	// cannot be named: refuse it rather than act as the user (D-29).
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if os.Getenv(coord.SessionEnv) != "" || coord.AgentBackend() == "" {
+			return nil
+		}
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		c, err := a.open(ctx)
+		if err != nil {
+			return coord.ErrUnidentified
+		}
+		defer c.Close()
+		if c.ResolveActor(ctx) == coord.Unidentified {
+			return coord.ErrUnidentified
+		}
+		return nil
+	}
 	root.AddCommand(
 		a.initCmd(), a.doctorCmd(), a.runCmd(), a.taskCmd(), a.briefCmd(), a.ruleCmd(),
 		a.pendingCmd(), a.delegationCmd(), a.effectCmd(), a.milestoneCmd(),
 		a.delegateCmd(), a.assignmentCmd(), a.handoffCmd(), a.sessionCmd(),
 		a.configCmd(), a.secretCmd(), a.toolCmd(), a.getCmd(), a.applyCmd(), a.lockCmd(),
-		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(), a.workerCmd(), a.itemCmd(), a.panelCmd(), a.attentionCmd(), a.actionsCmd(), a.messageCmd(),
+		a.sweepCmd(), a.mcpCmd(), a.leadCmd(), a.boardCmd(), a.hookCmd(), a.openCmd(), a.workerCmd(), a.itemCmd(), a.panelCmd(), a.attentionCmd(), a.actionsCmd(), a.messageCmd(), a.acpCmd(),
 	)
 	root.AddCommand(a.startCmd())
 	root.Use = "agent-shiftboard"
@@ -119,7 +140,11 @@ func (a *app) with(cmd *cobra.Command, fn func(ctx context.Context, c *coord.Coo
 		return err
 	}
 	defer c.Close()
-	return fn(ctx, c, c.ResolveActor(ctx))
+	actor := c.ResolveActor(ctx)
+	if actor == coord.Unidentified {
+		return coord.ErrUnidentified
+	}
+	return fn(ctx, c, actor)
 }
 
 // taskFor resolves --task or the actor's own task.

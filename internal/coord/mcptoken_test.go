@@ -47,6 +47,15 @@ func TestMCPTokens(t *testing.T) {
 		}
 	}
 
+	// Using the token is recorded once; a new token starts unused.
+	if must(f.c.MCPUsed(f.ctx, lead.SessionID)) {
+		t.Fatal("token used before any connection")
+	}
+	ok(t, f.c.MarkMCPUsed(f.ctx, lead.SessionID))
+	if !must(f.c.MCPUsed(f.ctx, lead.SessionID)) {
+		t.Fatal("token use not recorded")
+	}
+
 	// Reissue (resume) replaces the old token.
 	lt2 := must(f.c.IssueMCPToken(f.ctx, lead.SessionID))
 	if _, err := f.c.SessionForToken(f.ctx, lt); !errors.Is(err, ErrBadMCPToken) {
@@ -54,6 +63,9 @@ func TestMCPTokens(t *testing.T) {
 	}
 	if a := must(f.c.SessionForToken(f.ctx, lt2)); a.SessionID != lead.SessionID {
 		t.Fatalf("new token resolves to %v", a)
+	}
+	if must(f.c.MCPUsed(f.ctx, lead.SessionID)) {
+		t.Fatal("a new token counts as used")
 	}
 
 	// A session that stops or fails loses its token.

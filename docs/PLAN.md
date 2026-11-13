@@ -214,6 +214,7 @@ Hermes runs its agents inside a gateway process shared by every Hermes client on
 - **Messages (D-25).** The client knows exactly whether its input line is empty and whether a permission request is open, so it delivers queued messages to its own session under the D-25 guards instead of the board typing into its pane.
 - **Side effects.** ACP reports a tool call only as it starts and offers no blocking hook outside Hermes's permission requests, so side-effect enforcement is `unknown`; the launch context still requires effect records.
 - **Order.** Workers first (any provider's lead can delegate to Hermes). Hermes as lead follows once the worker path has passed live tests, since the same client is interactive and the handoff readback goes through MCP.
+- **Shell commands.** Hermes's terminal tool runs commands in the shared gateway, without the session's variables and outside the session's process tree. The CLI therefore refuses any command whose ancestors include a Hermes process unless it resolves to a managed session (`coord.Unidentified`); it never treats such a caller as the user. Hermes agents use the MCP tools, whose names Hermes prefixes (`mcp__editor_agent_shiftboard_<hash>__shiftboard_*`, long names shortened with a hash).
 - Preserve the user's Hermes provider/model configuration; AgentShiftboard does not route requests, rewrite provider credentials, or change the session's model.
 
 ### Adapter contract

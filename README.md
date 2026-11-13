@@ -66,7 +66,7 @@ AgentShiftboard is the missing fourth: native CLIs from different vendors workin
 | [Claude Code](https://code.claude.com) | Supported | lead, worker |
 | [Codex CLI](https://developers.openai.com/codex) | Supported | lead, worker |
 | Google Antigravity (`agy`) | Planned | — |
-| Hermes | Planned | — |
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) (`hermes acp`) | Alpha | worker |
 
 **Requirements:** [tmux](https://github.com/tmux/tmux) 3.3+, Go 1.27+ to build, and at least one supported CLI installed and logged in.
 
@@ -162,7 +162,8 @@ Details: [AGENTS.md](AGENTS.md) and the [state contract](docs/STATE-CONTRACT.md)
 - [x] Session list, actions panel, live checklists
 - [x] Delegation with result notification; lead switch between CLIs
 - [ ] Opt-in automatic failover when a lead hits its limit
-- [ ] Antigravity and Hermes adapters
+- [x] Hermes as a worker over ACP
+- [ ] Hermes as lead; Antigravity adapter
 - [ ] Retention for old brief revisions and events
 - [ ] Homebrew tap and release binaries; Linux validation
 

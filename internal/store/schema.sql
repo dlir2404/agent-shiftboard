@@ -162,7 +162,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   unknown_since     TEXT NOT NULL DEFAULT '',
   turns_since_brief INTEGER NOT NULL DEFAULT 0,
   created_at        TEXT NOT NULL,
-  mcp_token_hash    TEXT NOT NULL DEFAULT '' -- sha256 hex of the session's MCP token (D-28); '' = none or revoked
+  mcp_token_hash    TEXT NOT NULL DEFAULT '', -- sha256 hex of the session's MCP token (D-28); '' = none or revoked
+  mcp_used_at       TEXT NOT NULL DEFAULT ''  -- when the current token first opened an MCP session; '' = not yet
 );
 
 CREATE TABLE IF NOT EXISTS leases (

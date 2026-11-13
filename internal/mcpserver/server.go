@@ -117,7 +117,7 @@ func ok(msg string) any { return msg }
 func (r registrar) register() {
 	add(r, "worker_start", "Start an independent worker for an assignment (lead); choose its provider for short or long work.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		ID       string `json:"id" jsonschema:"assignment ID, e.g. A-2"`
-		Provider string `json:"provider" jsonschema:"provider CLI: claude or codex"`
+		Provider string `json:"provider" jsonschema:"provider CLI: claude, codex, or hermes (worker only)"`
 	}) (any, error) {
 		if r.ops == nil || r.ops.WorkerStart == nil {
 			return nil, fmt.Errorf("worker_start is unavailable: lifecycle operations were not configured")
