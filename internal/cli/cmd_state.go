@@ -714,7 +714,7 @@ func (a *app) sessionCmd() *cobra.Command {
 	observe.Flags().StringVar(&reason, "reason", "", "stop/failure reason")
 	observe.Flags().StringVar(&source, "source", "user", "observation source")
 	closeCmd := &cobra.Command{
-		Use: "close <session|A-n|unique-prefix>", Short: "Close an idle worker or former lead (lead)", Args: cobra.ExactArgs(1),
+		Use: "close <session|A-n|unique-prefix>", Short: "Close an idle (or unknown but at rest) worker or former lead (lead)", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.with(cmd, func(ctx context.Context, c *coord.Coordinator, actor coord.Actor) error {
 				sid, err := c.ResolveSession(ctx, actor, args[0])
@@ -722,7 +722,7 @@ func (a *app) sessionCmd() *cobra.Command {
 					return err
 				}
 				ws := tmux.New(tmux.Exec{}, c.Root)
-				if err := c.CloseSession(ctx, actor, sid, ws.Close); err != nil {
+				if err := c.CloseSession(ctx, actor, sid, ws.Close, paneAtRest(ws)); err != nil {
 					return err
 				}
 				return a.done("Closed session "+sid+".", map[string]string{"session": sid})

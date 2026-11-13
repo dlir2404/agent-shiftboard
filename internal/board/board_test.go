@@ -692,3 +692,39 @@ func TestCodexNativeStates(t *testing.T) {
 		t.Fatal("board does not show when to try again")
 	}
 }
+
+func TestPaneAtRest(t *testing.T) {
+	defer func(w time.Duration) { RestWindow = w }(RestWindow)
+	RestWindow = time.Millisecond
+	const border = "\x1b[38;5;244m────────"
+	empty := border + "\n\x1b[39m❯ \x1b[0m\n" + border
+	typed := border + "\n\x1b[39m❯ half typed\x1b[0m\n" + border
+	run := func(screens []string, view string, line string, x int) error {
+		i := 0
+		capture := func(string, int) (string, error) {
+			s := screens[min(i, len(screens)-1)]
+			i++
+			return s, nil
+		}
+		input := func(string) (string, string, int, error) { return view, line, x, nil }
+		return PaneAtRest("%4", capture, input)
+	}
+	idle := "✻ Cooked for 12s · done 11:40 AM\n❯ \n"
+	if err := run([]string{idle}, empty, "❯ ", 2); err != nil {
+		t.Fatalf("idle Claude pane: %v", err)
+	}
+	working := []string{"✶ Thinking… (12s · esc to interrupt)\n❯ \n", "✶ Thinking… (15s · esc to interrupt)\n❯ \n"}
+	if err := run(working, empty, "❯ ", 2); err == nil || !strings.Contains(err.Error(), "changed") {
+		t.Fatalf("working pane: %v", err)
+	}
+	if err := run([]string{idle}, typed, "❯ half typed", 12); err == nil || !strings.Contains(err.Error(), "input line") {
+		t.Fatalf("draft in input: %v", err)
+	}
+	approval := "Do you want to proceed?\n❯ 1. Yes\n  2. No\n"
+	if err := run([]string{approval}, empty, "❯ ", 2); err == nil || !strings.Contains(err.Error(), "prompt") {
+		t.Fatalf("approval prompt: %v", err)
+	}
+	if err := run([]string{""}, empty, "❯ ", 2); err == nil {
+		t.Fatal("an unreadable pane counted as at rest")
+	}
+}

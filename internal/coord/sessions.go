@@ -148,16 +148,32 @@ func (c *Coordinator) SetSessionRuntime(ctx context.Context, sessionID, paneID s
 	return err
 }
 
+// closableStatus lists the statuses in which a session's CLI waits rather
+// than works, so closing it interrupts no work.
+func closableStatus(status string) bool {
+	switch status {
+	case "idle", "quota_unavailable", "cooling_down", "authentication_required":
+		return true
+	}
+	return false
+}
+
 // CloseSession closes an idle worker or former lead. Validate in a short
 // transaction, then let the workspace end the pane without holding a DB lock.
 // A failed close leaves the observation unchanged; only a confirmed close is
 // recorded as stopped. Native session identity is retained for later resume.
-func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID string, kill func(string) error) error {
+//
+// A session whose status is unknown (its CLI stopped reporting) can be
+// closed only when atRest, a workspace check of its pane, shows the CLI
+// waiting at an empty input with no native prompt and no activity. Without
+// that check it is refused.
+func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID string, kill, atRest func(string) error) error {
 	if kill == nil {
 		return errors.New("session close requires a workspace operation")
 	}
 	var taskID int64
 	var pane string
+	var unknown bool
 	err := c.tx(ctx, func(tx *sql.Tx) error {
 		s, err := loadSession(tx, sessionID)
 		if err != nil {
@@ -180,11 +196,12 @@ func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID strin
 		if s.Role != "worker" && s.Role != "lead" {
 			return errors.New("only workers and former leads can be closed")
 		}
-		switch s.Status {
-		case "idle", "quota_unavailable", "cooling_down", "authentication_required":
-			// The CLI waits at its prompt; closing it interrupts no work.
+		switch {
+		case closableStatus(s.Status):
+		case s.Status == "unknown" && atRest != nil:
+			unknown = true
 		default:
-			return fmt.Errorf("session %s is %s; only an idle session, or one out of quota, cooling down, or waiting for authentication, can be closed", s.ID, s.Status)
+			return fmt.Errorf("session %s is %s; only an idle session, one out of quota, cooling down, or waiting for authentication, or an unknown one whose pane shows it at rest, can be closed", s.ID, s.Status)
 		}
 		if s.Role == "worker" {
 			var active int
@@ -205,6 +222,19 @@ func (c *Coordinator) CloseSession(ctx context.Context, a Actor, sessionID strin
 	})
 	if err != nil {
 		return err
+	}
+	if unknown {
+		if err := atRest(pane); err != nil {
+			return fmt.Errorf("session %s is unknown and its pane does not show it at rest: %w", sessionID, err)
+		}
+		// The CLI may have reported while the pane was watched.
+		var status string
+		if err := c.DB.QueryRowContext(ctx, `SELECT status FROM sessions WHERE id=?`, sessionID).Scan(&status); err != nil {
+			return err
+		}
+		if status != "unknown" && !closableStatus(status) {
+			return fmt.Errorf("session %s is now %s; not closed", sessionID, status)
+		}
 	}
 	if err := kill(pane); err != nil {
 		return fmt.Errorf("close session %s: %w", sessionID, err)

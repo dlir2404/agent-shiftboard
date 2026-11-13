@@ -77,7 +77,7 @@ func TestMCPTokens(t *testing.T) {
 	ok(t, f.c.Observe(f.ctx, Actor{SessionID: wid}, wid, "idle", "", "hook"))
 	ok(t, f.c.CancelAssignment(f.ctx, lead, aid, "done"))
 	ok(t, f.c.SetSessionRuntime(f.ctx, wid, "%7", 0, ""))
-	ok(t, f.c.CloseSession(f.ctx, lead, wid, func(string) error { return nil }))
+	ok(t, f.c.CloseSession(f.ctx, lead, wid, func(string) error { return nil }, nil))
 	if _, err := f.c.SessionForToken(f.ctx, wt3); !errors.Is(err, ErrBadMCPToken) {
 		t.Fatalf("closed session's token still works: %v", err)
 	}

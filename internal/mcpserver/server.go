@@ -125,7 +125,7 @@ func (r registrar) register() {
 		sid, pane, err := r.ops.WorkerStart(ctx, c, a, strings.ToUpper(in.ID), in.Provider)
 		return map[string]string{"session": sid, "pane": pane}, err
 	})
-	add(r, "session_close", "Close an idle worker or former lead of your task (lead). Cancel assigned or running work first; the current lead and your own session cannot be closed.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
+	add(r, "session_close", "Close an idle worker or former lead of your task (lead), or one whose status is unknown when its pane shows it at rest (checked for a few seconds). Cancel assigned or running work first; the current lead and your own session cannot be closed.", func(ctx context.Context, c *coord.Coordinator, a coord.Actor, in struct {
 		Session string `json:"session" jsonschema:"session ID, assignment ID (A-n), or unique session ID prefix"`
 	}) (any, error) {
 		if r.ops == nil || r.ops.SessionClose == nil {

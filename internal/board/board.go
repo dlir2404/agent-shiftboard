@@ -1442,6 +1442,51 @@ func readyForTyping(s coord.Session) bool {
 	return true
 }
 
+// RestWindow is how long PaneAtRest watches a pane for activity. Claude
+// Code and Codex redraw an elapsed-time counter every second while they
+// work (thinking, streaming, or waiting on a tool), so a working CLI's
+// screen changes within it.
+var RestWindow = 3 * time.Second
+
+// PaneAtRest checks that a CLI whose status is unknown waits rather than
+// works, before it is closed (D-26): its screen shows the CLI's empty input
+// line, no native prompt (approval or selection dialog), and does not
+// change for RestWindow. It fails closed: anything it cannot read counts
+// as not at rest. Screens are compared, never stored.
+func PaneAtRest(pane string, capture func(pane string, lines int) (string, error),
+	inputView func(pane string) (screen, cursorLine string, cursorX int, err error)) error {
+	look := func() (string, error) {
+		screen, err := capture(pane, 40)
+		if err != nil || strings.TrimSpace(screen) == "" {
+			return "", fmt.Errorf("cannot read the pane")
+		}
+		if p := nativePrompt(screen); p != "" {
+			return "", fmt.Errorf("it shows a prompt that needs the user (%s)", p)
+		}
+		view, line, x, err := inputView(pane)
+		if err != nil {
+			return "", fmt.Errorf("cannot read the input line")
+		}
+		if found, typed := inputState(view); !found || typed || !cursorAtEmptyInput(line, x) {
+			return "", fmt.Errorf("its input line is not empty or not visible")
+		}
+		return screen, nil
+	}
+	first, err := look()
+	if err != nil {
+		return err
+	}
+	time.Sleep(RestWindow)
+	second, err := look()
+	if err != nil {
+		return err
+	}
+	if first != second {
+		return fmt.Errorf("its screen changed within %s, so it may be working", RestWindow)
+	}
+	return nil
+}
+
 // cursorAtEmptyInput reports whether the cursor sits right after the
 // input glyph and its space, where an empty input line keeps it. Any text
 // the user typed, on this line or on further lines, moves it.

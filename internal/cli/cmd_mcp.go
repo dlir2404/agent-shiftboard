@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dlir2404/agent-shiftboard/internal/adapter"
+	"github.com/dlir2404/agent-shiftboard/internal/board"
 	"github.com/dlir2404/agent-shiftboard/internal/coord"
 	"github.com/dlir2404/agent-shiftboard/internal/mcpserver"
 	"github.com/dlir2404/agent-shiftboard/internal/paths"
@@ -61,7 +62,7 @@ func (a *app) mcpOps() *mcpserver.Ops {
 				return err
 			}
 			ws := tmux.New(tmux.Exec{}, c.Root)
-			return c.CloseSession(ctx, actor, sid, ws.Close)
+			return c.CloseSession(ctx, actor, sid, ws.Close, paneAtRest(ws))
 		},
 		SessionList: func(ctx context.Context, c *coord.Coordinator, actor coord.Actor, task int64) ([]coord.SessionView, error) {
 			id, err := c.ResolveTask(ctx, actor, task)
@@ -71,6 +72,12 @@ func (a *app) mcpOps() *mcpserver.Ops {
 			return c.ListSessionViews(ctx, id)
 		},
 	}
+}
+
+// paneAtRest checks, through the workspace, that a session whose status is
+// unknown waits at an empty input with no prompt and no activity.
+func paneAtRest(ws tmux.Workspace) func(string) error {
+	return func(pane string) error { return board.PaneAtRest(pane, ws.Capture, ws.InputView) }
 }
 
 // mcpAddrFile records the shared server's host:port for a project.

@@ -15,23 +15,23 @@ func TestCloseSessionGuards(t *testing.T) {
 	var killed []string
 	kill := func(p string) error { killed = append(killed, p); return nil }
 
-	fails(t, f.c.CloseSession(f.ctx, lead, lead.SessionID, kill), "your own session")
-	fails(t, f.c.CloseSession(f.ctx, worker, lead.SessionID, kill), "only the current lead")
+	fails(t, f.c.CloseSession(f.ctx, lead, lead.SessionID, kill, nil), "your own session")
+	fails(t, f.c.CloseSession(f.ctx, worker, lead.SessionID, kill, nil), "only the current lead")
 	ok(t, f.c.Observe(f.ctx, worker, wid, "running", "", "hook"))
-	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill), "only an idle session")
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill, nil), "only an idle session")
 	ok(t, f.c.Observe(f.ctx, worker, wid, "idle", "", "hook"))
-	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill), "cancel it first")
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill, nil), "cancel it first")
 	ok(t, f.c.CancelAssignment(f.ctx, lead, aid, "not needed"))
 	if len(killed) != 0 {
 		t.Fatalf("killed before every guard passed: %v", killed)
 	}
 
 	// A failed kill records nothing.
-	fails(t, f.c.CloseSession(f.ctx, lead, wid, func(string) error { return errors.New("no pane") }), "no pane")
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, func(string) error { return errors.New("no pane") }, nil), "no pane")
 	if s := sessionByID(t, f, id, wid); s.Status != "idle" {
 		t.Fatalf("status after failed kill: %s", s.Status)
 	}
-	ok(t, f.c.CloseSession(f.ctx, lead, wid, kill))
+	ok(t, f.c.CloseSession(f.ctx, lead, wid, kill, nil))
 	s := sessionByID(t, f, id, wid)
 	if len(killed) != 1 || killed[0] != "%7" || s.Status != "stopped" || s.Reason != "completed" || s.StatusSource != "process" {
 		t.Fatalf("killed=%v session=%+v", killed, s)
@@ -43,13 +43,13 @@ func TestCloseSessionGuards(t *testing.T) {
 	}
 
 	// The lead cannot be closed, even by the user; a former lead can.
-	fails(t, f.c.CloseSession(f.ctx, User, lead.SessionID, kill), "current or pending lead")
+	fails(t, f.c.CloseSession(f.ctx, User, lead.SessionID, kill, nil), "current or pending lead")
 	next := Actor{SessionID: must(f.c.StartLead(f.ctx, User, id, SessionSpec{Provider: "codex"}))}
-	fails(t, f.c.CloseSession(f.ctx, User, next.SessionID, kill), "current or pending lead")
+	fails(t, f.c.CloseSession(f.ctx, User, next.SessionID, kill, nil), "current or pending lead")
 	ok(t, f.c.AckHandoff(f.ctx, next, nil))
 	ok(t, f.c.SetSessionRuntime(f.ctx, lead.SessionID, "%2", 0, ""))
 	ok(t, f.c.Observe(f.ctx, lead, lead.SessionID, "idle", "", "hook"))
-	ok(t, f.c.CloseSession(f.ctx, next, lead.SessionID, kill))
+	ok(t, f.c.CloseSession(f.ctx, next, lead.SessionID, kill, nil))
 	if s := sessionByID(t, f, id, lead.SessionID); s.Status != "stopped" {
 		t.Fatalf("former lead status %s", s.Status)
 	}
@@ -57,7 +57,7 @@ func TestCloseSessionGuards(t *testing.T) {
 	// Sessions of another task are out of reach.
 	other := must(f.c.CreateTask(f.ctx, User, "other", ""))
 	osid := must(f.c.StartLead(f.ctx, User, other, SessionSpec{Provider: "claude"}))
-	fails(t, f.c.CloseSession(f.ctx, next, osid, kill), "belongs to task")
+	fails(t, f.c.CloseSession(f.ctx, next, osid, kill, nil), "belongs to task")
 }
 
 func TestResolveSessionAndViews(t *testing.T) {
@@ -106,4 +106,34 @@ func TestCheckMCPCaller(t *testing.T) {
 	ok(t, f.c.CheckMCPCaller(f.ctx, lead))
 	ok(t, f.c.Observe(f.ctx, lead, lead.SessionID, "stopped", "user_stopped", "process"))
 	fails(t, f.c.CheckMCPCaller(f.ctx, lead), "has ended")
+}
+
+// An unknown session closes only when the workspace shows its pane at rest,
+// and not when its CLI reports work while the pane is watched.
+func TestCloseUnknownSession(t *testing.T) {
+	f := newFixture(t)
+	id, lead := f.startLead(t)
+	aid := must(f.c.CreateAssignment(f.ctx, lead, AssignmentInput{TaskID: id, Scope: "x"}))
+	wid := must(f.c.RegisterWorker(f.ctx, lead, aid, SessionSpec{Provider: "claude"}))
+	worker := Actor{SessionID: wid}
+	ok(t, f.c.SetSessionRuntime(f.ctx, wid, "%7", 0, ""))
+	ok(t, f.c.CancelAssignment(f.ctx, lead, aid, "done"))
+	ok(t, f.c.Observe(f.ctx, worker, wid, "unknown", "unknown", "process"))
+	var killed []string
+	kill := func(p string) error { killed = append(killed, p); return nil }
+
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill, nil), "unknown one whose pane shows it at rest")
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill, func(string) error { return errors.New("the screen changed") }), "does not show it at rest")
+	busy := func(string) error { return f.c.Observe(f.ctx, worker, wid, "running", "", "hook") }
+	fails(t, f.c.CloseSession(f.ctx, lead, wid, kill, busy), "is now running")
+	if len(killed) != 0 {
+		t.Fatalf("killed without a pane at rest: %v", killed)
+	}
+
+	ok(t, f.c.Observe(f.ctx, worker, wid, "unknown", "unknown", "process"))
+	var watched string
+	ok(t, f.c.CloseSession(f.ctx, lead, wid, kill, func(p string) error { watched = p; return nil }))
+	if s := sessionByID(t, f, id, wid); watched != "%7" || len(killed) != 1 || s.Status != "stopped" || s.Reason != "completed" {
+		t.Fatalf("watched=%q killed=%v session=%+v", watched, killed, s)
+	}
 }
